@@ -1,0 +1,40 @@
+version: '3.8'
+
+services:
+  # PostgreSQL (使用本地已有镜像)
+  postgres:
+    image: postgres:15-alpine
+    container_name: echoman-postgres-simple
+    environment:
+      POSTGRES_USER: echoman
+      POSTGRES_PASSWORD: echoman_password
+      POSTGRES_DB: echoman
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_simple_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U echoman"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Redis (使用本地已有镜像)
+  redis:
+    image: redis:6-alpine
+    container_name: echoman-redis-simple
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_simple_data:/data
+    command: redis-server --appendonly yes
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  postgres_simple_data:
+  redis_simple_data:
+

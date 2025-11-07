@@ -1,0 +1,112 @@
+{
+  "dashboard": {
+    "title": "Echoman 监控仪表板",
+    "tags": ["echoman", "monitoring"],
+    "timezone": "browser",
+    "panels": [
+      {
+        "id": 1,
+        "title": "采集成功率",
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "rate(echoman_ingest_total{status=\"success\"}[5m])"
+          }
+        ],
+        "gridPos": {"x": 0, "y": 0, "w": 12, "h": 8}
+      },
+      {
+        "id": 2,
+        "title": "主题数量",
+        "type": "stat",
+        "targets": [
+          {
+            "expr": "echoman_topics_total"
+          }
+        ],
+        "gridPos": {"x": 12, "y": 0, "w": 12, "h": 8}
+      },
+      {
+        "id": 3,
+        "title": "LLM调用量",
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "rate(echoman_llm_calls_total[5m])"
+          }
+        ],
+        "gridPos": {"x": 0, "y": 8, "w": 12, "h": 8}
+      },
+      {
+        "id": 4,
+        "title": "LLM Token消耗",
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "rate(echoman_llm_tokens_total[5m])"
+          }
+        ],
+        "gridPos": {"x": 12, "y": 8, "w": 12, "h": 8}
+      },
+      {
+        "id": 5,
+        "title": "系统CPU使用率",
+        "type": "gauge",
+        "targets": [
+          {
+            "expr": "echoman_system_cpu_percent"
+          }
+        ],
+        "gridPos": {"x": 0, "y": 16, "w": 8, "h": 6}
+      },
+      {
+        "id": 6,
+        "title": "系统内存使用率",
+        "type": "gauge",
+        "targets": [
+          {
+            "expr": "echoman_system_memory_percent"
+          }
+        ],
+        "gridPos": {"x": 8, "y": 16, "w": 8, "h": 6}
+      },
+      {
+        "id": 7,
+        "title": "系统磁盘使用率",
+        "type": "gauge",
+        "targets": [
+          {
+            "expr": "echoman_system_disk_percent"
+          }
+        ],
+        "gridPos": {"x": 16, "y": 16, "w": 8, "h": 6}
+      },
+      {
+        "id": 8,
+        "title": "对话查询延迟",
+        "type": "heatmap",
+        "targets": [
+          {
+            "expr": "rate(echoman_chat_duration_seconds_bucket[5m])"
+          }
+        ],
+        "gridPos": {"x": 0, "y": 22, "w": 12, "h": 8}
+      },
+      {
+        "id": 9,
+        "title": "归并耗时",
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "histogram_quantile(0.95, rate(echoman_merge_duration_seconds_bucket[5m]))"
+          }
+        ],
+        "gridPos": {"x": 12, "y": 22, "w": 12, "h": 8}
+      }
+    ],
+    "refresh": "30s",
+    "schemaVersion": 27,
+    "version": 1
+  }
+}
+
