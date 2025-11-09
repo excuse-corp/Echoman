@@ -351,16 +351,17 @@ export async function getTopicDetail(
 
 export async function getTimeline(
   topicId: string,
-): Promise<{ nodes: TimelineNode[]; fallback: boolean }> {
+): Promise<{ nodes: TimelineNode[]; topic_summary?: string | null; fallback: boolean }> {
   try {
     // 后端API路径: GET /api/v1/topics/{topic_id}/timeline
-    // 返回分页数据，需要提取items字段
+    // 返回包含 topic_summary 和 items 的对象
     const response = await fetch(`${API_BASE_URL}/topics/${topicId}/timeline`);
     if (!response.ok) {
       throw new Error(`Bad status: ${response.status}`);
     }
     const payload = await response.json();
     const rawItems: unknown[] = payload.items || payload.nodes || [];
+    const topicSummary = payload.topic_summary ?? null;
 
     const nodes: TimelineNode[] = rawItems.map((item: any) => {
       const published = item.published_at ?? item.timestamp ?? item.created_at ?? null;
@@ -393,13 +394,20 @@ export async function getTimeline(
         source_url: item.source_url ?? item.url ?? item.link ?? "",
         captured_at: captured,
         engagement,
+        // 聚合字段
+        duplicate_count: item.duplicate_count ?? undefined,
+        time_range_start: item.time_range_start ?? undefined,
+        time_range_end: item.time_range_end ?? undefined,
+        all_platforms: item.all_platforms ?? undefined,
+        all_source_urls: item.all_source_urls ?? undefined,
+        all_timestamps: item.all_timestamps ?? undefined,
       } satisfies TimelineNode;
     });
 
-    return { nodes, fallback: false };
+    return { nodes, topic_summary: topicSummary, fallback: false };
   } catch (error) {
     console.warn("[api] getTimeline fallback, reason:", error);
-    return { nodes: fallbackTimelines[topicId] ?? [], fallback: true };
+    return { nodes: fallbackTimelines[topicId] ?? [], topic_summary: null, fallback: true };
   }
 }
 

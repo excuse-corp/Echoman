@@ -963,7 +963,7 @@ button {
 
 .timeline-title {
   margin: 6px 0 0;
-  font-size: 15px;
+  font-size: 14px;
   color: var(--text-strong);
   font-weight: 600;
 }
@@ -975,11 +975,48 @@ button {
   color: rgba(226, 232, 240, 0.72);
 }
 
+.timeline-report-count,
+.timeline-preview-count {
+  margin-top: 4px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.timeline-source-list {
+  margin-top: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.timeline-source-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 12px;
+}
+
+.timeline-source-time {
+  color: var(--text-muted);
+  min-width: 110px;
+}
+
+.timeline-source-link {
+  color: var(--accent-300);
+  text-decoration: none;
+}
+
+.timeline-source-link:hover {
+  text-decoration: underline;
+}
+
 .timeline-source {
   display: inline-block;
-  margin-top: 6px;
+  margin-top: 8px;
   font-size: 12px;
-  color: var(--accent-primary);
+  color: var(--accent-300);
+  text-decoration: none;
+  transition: color 0.2s ease;
 }
 
 .conversation-card {
@@ -1255,26 +1292,26 @@ button {
 }
 
 .timeline-preview-meta {
-  font-size: 10px;
+  font-size: 12px;
   color: var(--text-muted);
   font-weight: 500;
 }
 
 .timeline-preview-title {
-  font-size: 13px;
-  font-weight: 650;
+  font-size: 14px;
+  font-weight: 600;
   color: var(--text-strong);
-  line-height: 1.35;
+  line-height: 1.45;
 }
 
 .timeline-preview-body {
-  font-size: 12px;
+  font-size: 13px;
   color: var(--text-body);
-  line-height: 1.5;
+  line-height: 1.55;
 }
 
 .timeline-preview-item a {
-  font-size: 11px;
+  font-size: 12px;
   color: var(--accent-primary);
   text-decoration: none;
   font-weight: 500;

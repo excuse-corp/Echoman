@@ -58,37 +58,37 @@ app.conf.update(
             ),
         },
         
-        # ========== 归并任务（3次/天：上午、下午、傍晚） ==========
-        
-        # 上午归并 (处理 AM 时段数据: 8:00, 10:00, 12:00)
-        "halfday-merge-am": {
-            "task": "app.tasks.merge_tasks.halfday_merge",
-            "schedule": crontab(hour=12, minute=15),
-        },
-        "global-merge-am": {
-            "task": "app.tasks.merge_tasks.global_merge",
-            "schedule": crontab(hour=12, minute=30),
-        },
-        
-        # 下午归并 (处理 PM 时段数据: 14:00, 16:00, 18:00)
-        "halfday-merge-pm": {
-            "task": "app.tasks.merge_tasks.halfday_merge",
-            "schedule": crontab(hour=18, minute=15),
-        },
-        "global-merge-pm": {
-            "task": "app.tasks.merge_tasks.global_merge",
-            "schedule": crontab(hour=18, minute=30),
-        },
-        
-        # 傍晚归并 (处理 EVE 时段数据: 20:00, 22:00)
-        "halfday-merge-eve": {
-            "task": "app.tasks.merge_tasks.halfday_merge",
-            "schedule": crontab(hour=22, minute=15),
-        },
-        "global-merge-eve": {
-            "task": "app.tasks.merge_tasks.global_merge",
-            "schedule": crontab(hour=22, minute=30),
-        },
+    # ========== 归并任务（3次/天：上午、下午、傍晚） ==========
+
+    # 上午归并 (处理 AM 时段数据: 8:00, 10:00, 12:00)
+    "halfday-merge-am": {
+        "task": "app.tasks.merge_tasks.halfday_merge",
+        "schedule": crontab(hour=12, minute=5),  # 提前10分钟：12:05
+    },
+    "global-merge-am": {
+        "task": "app.tasks.merge_tasks.global_merge",
+        "schedule": crontab(hour=12, minute=20),  # 提前10分钟：12:20
+    },
+
+    # 下午归并 (处理 PM 时段数据: 14:00, 16:00, 18:00)
+    "halfday-merge-pm": {
+        "task": "app.tasks.merge_tasks.halfday_merge",
+        "schedule": crontab(hour=18, minute=5),  # 提前10分钟：18:05
+    },
+    "global-merge-pm": {
+        "task": "app.tasks.merge_tasks.global_merge",
+        "schedule": crontab(hour=18, minute=20),  # 提前10分钟：18:20
+    },
+
+    # 傍晚归并 (处理 EVE 时段数据: 20:00, 22:00)
+    "halfday-merge-eve": {
+        "task": "app.tasks.merge_tasks.halfday_merge",
+        "schedule": crontab(hour=22, minute=5),  # 提前10分钟：22:05
+    },
+    "global-merge-eve": {
+        "task": "app.tasks.merge_tasks.global_merge",
+        "schedule": crontab(hour=22, minute=20),  # 提前10分钟：22:20
+    },
         
         # ========== 分类统计重算（每日1:00） ==========
         

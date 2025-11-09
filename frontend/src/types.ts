@@ -39,11 +39,18 @@ export interface TimelineNode {
   source_url: string;
   captured_at: string;
   engagement?: number;
+  // 聚合字段（用于相同内容的多次报道）
+  duplicate_count?: number;
+  time_range_start?: string;
+  time_range_end?: string;
+  all_platforms?: PlatformName[];
+  all_source_urls?: string[];
+  all_timestamps?: string[];
 }
 
 export interface TimelineResponse {
-  topic_id: string;
-  nodes: TimelineNode[];
+  topic_summary?: string | null;
+  items: TimelineNode[];
 }
 
 export interface CategoryEchoStat {

@@ -53,42 +53,44 @@ const PLATFORM_LABELS: Record<string, string> = {
 
 const STREAM_INTERVAL_MS = 120;
 
-type TimelineGroup = {
-  key: string;
-  nodes: TimelineNode[];
-};
-
-// 将时间线节点按小时和标题分组
-function groupNodesByTimestampAndTitle(nodes: TimelineNode[]): TimelineGroup[] {
-  const groups: TimelineGroup[] = [];
-  const map = new Map<string, TimelineGroup>();
-
-  for (const node of nodes) {
-    // 将时间戳格式化到小时级别，忽略分钟、秒和毫秒
-    const date = new Date(node.timestamp);
-    const timeKey = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')} ${String(date.getHours()).padStart(2, '0')}`;
-    const key = `${timeKey}__${node.title}`;
-    
-    let group = map.get(key);
-    if (!group) {
-      group = { key, nodes: [] };
-      map.set(key, group);
-      groups.push(group);
-    }
-    
-    group.nodes.push(node);
-  }
-
-  return groups;
+function formatTimelineTimestamp(timestamp: string) {
+  return new Date(timestamp).toLocaleString("zh-CN", {
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
 }
 
-function formatTimelineTimestamp(timestamp: string) {
-  const date = new Date(timestamp);
-  const month = `${date.getMonth() + 1}`.padStart(2, "0");
-  const day = `${date.getDate()}`.padStart(2, "0");
-  const hour = `${date.getHours()}`.padStart(2, "0");
-  const minute = `${date.getMinutes()}`.padStart(2, "0");
-  return `${month}月${day}日 ${hour}:${minute}`;
+function formatTimelineRange(start: string, end: string) {
+  const startDate = new Date(start);
+  const endDate = new Date(end);
+
+  if (Number.isNaN(startDate.getTime()) || Number.isNaN(endDate.getTime())) {
+    return formatTimelineTimestamp(end);
+  }
+
+  const sameDay = startDate.toDateString() === endDate.toDateString();
+
+  const formatterDate = new Intl.DateTimeFormat("zh-CN", {
+    month: "2-digit",
+    day: "2-digit",
+  });
+  const formatterTime = new Intl.DateTimeFormat("zh-CN", {
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+
+  const startDateLabel = formatterDate.format(startDate);
+  const endDateLabel = formatterDate.format(endDate);
+  const startTimeLabel = formatterTime.format(startDate);
+  const endTimeLabel = formatterTime.format(endDate);
+
+  if (sameDay) {
+    return `${startDateLabel} ${startTimeLabel} - ${endTimeLabel}`;
+  }
+
+  return `${startDateLabel} ${startTimeLabel} - ${endDateLabel} ${endTimeLabel}`;
 }
 
 function splitIntoStreamChunks(text: string) {
@@ -375,7 +377,7 @@ export function ConversationConsole({
                     你好，我是 Echoman，这是我整理的「{message.topicTitle}」事件时间线
                     {message.includesFallback ? "（演示数据）" : ""}。
                   </p>
-                  {message.summary && message.summary.trim() && <p className="timeline-summary">{message.summary}</p>}
+                  {message.summary && message.summary.trim() && <p className="timeline-summary">摘要：{message.summary}</p>}
                   {message.keyPoints.length > 0 && (
                     <div className="timeline-keypoints">
                       <h4>关键要点</h4>
@@ -387,36 +389,50 @@ export function ConversationConsole({
                     </div>
                   )}
                   <ul className="timeline-preview">
-                    {groupNodesByTimestampAndTitle(message.nodes).map((group) => {
-                      const primary = group.nodes[0];
-                      const platformNames = Array.from(
-                        new Set(
-                          group.nodes.map((node) => PLATFORM_LABELS[node.source_platform] ?? node.source_platform)
-                        )
-                      );
-                      
+                    {message.nodes.map((node) => {
+                      const duplicateCount = Number(node.duplicate_count ?? 0);
+                      const hasDuplicates = duplicateCount > 1;
+                      const timeRangeText = hasDuplicates && node.time_range_start && node.time_range_end
+                        ? formatTimelineRange(node.time_range_start, node.time_range_end)
+                        : formatTimelineTimestamp(node.timestamp);
+
+                      const platformLabels = hasDuplicates && node.all_platforms && node.all_platforms.length
+                        ? Array.from(new Set(node.all_platforms.map((p) => PLATFORM_LABELS[p] ?? p))).join(" / ")
+                        : PLATFORM_LABELS[node.source_platform] ?? node.source_platform;
+
+                      const sourceLinks = hasDuplicates && node.all_source_urls && node.all_source_urls.length
+                        ? node.all_source_urls.map((url, idx) => {
+                            const platform = node.all_platforms?.[idx] || node.source_platform;
+                            const label = PLATFORM_LABELS[platform] ?? platform;
+                            const timestamp = node.all_timestamps?.[idx] ?? node.timestamp;
+                            return { url, label, key: `${node.node_id}-${idx}`, timestamp };
+                          })
+                        : [{ url: node.source_url, label: PLATFORM_LABELS[node.source_platform] ?? node.source_platform, key: node.node_id, timestamp: node.timestamp }];
+
                       return (
-                        <li className="timeline-preview-item" key={group.key}>
+                        <li className="timeline-preview-item" key={node.node_id}>
                           <div className="timeline-preview-meta">
-                            {formatTimelineTimestamp(primary.timestamp)} · {platformNames.join(" / ")}
+                            {timeRangeText} · {platformLabels}
                           </div>
-                          <div className="timeline-preview-title">{primary.title}</div>
-                          <div className="timeline-preview-body">{primary.content}</div>
-                          <div style={{ marginTop: "6px" }}>
-                            {group.nodes.map((node) => {
-                              const label = PLATFORM_LABELS[node.source_platform] ?? node.source_platform;
-                              return (
-                                <a 
-                                  key={node.node_id}
-                                  href={node.source_url} 
-                                  target="_blank" 
+                          <div className="timeline-preview-title">{node.title}</div>
+                          <div className="timeline-preview-body">{node.content}</div>
+                          {hasDuplicates && (
+                            <div className="timeline-preview-count">共 {duplicateCount} 次报道</div>
+                          )}
+                          <div className="timeline-source-list">
+                            {sourceLinks.map(({ url, label, key, timestamp }) => (
+                              <div className="timeline-source-item" key={key}>
+                                <span className="timeline-source-time">{formatTimelineTimestamp(timestamp ?? node.timestamp)}</span>
+                                <a
+                                  href={url ?? "#"}
+                                  target="_blank"
                                   rel="noopener noreferrer"
-                                  style={{ marginRight: "10px" }}
+                                  className="timeline-source-link"
                                 >
                                   {label} 原文 →
                                 </a>
-                              );
-                            })}
+                              </div>
+                            ))}
                           </div>
                         </li>
                       );

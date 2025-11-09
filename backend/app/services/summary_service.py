@@ -11,12 +11,14 @@ from datetime import datetime
 from datetime import timedelta
 from app.utils.timezone import now_cn
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func
+from sqlalchemy import select, func, update
 import json
 import logging
 
-from app.models import Summary, Topic, TopicNode, SourceItem, LLMJudgement
+from app.models import Summary, Topic, TopicNode, SourceItem, LLMJudgement, Embedding
 from app.services.llm.factory import get_llm_provider
+from app.services.llm import get_embedding_provider
+from app.services.vector_service import get_vector_service
 from app.config import settings
 from app.utils.token_manager import get_token_manager
 
@@ -29,6 +31,7 @@ class SummaryService:
     def __init__(self):
         self.settings = settings
         self.llm_provider = get_llm_provider()
+        self.embedding_provider = get_embedding_provider()
         self.token_manager = get_token_manager(model=settings.qwen_model)
         self.min_nodes_for_update = 3  # 最少新节点数才触发更新
         self.max_context_nodes = 15  # 最多使用的节点数
@@ -155,9 +158,15 @@ class SummaryService:
             await db.refresh(summary)
             logger.info(f"   💾 摘要已保存到数据库 (Summary ID: {summary.id})")
             
+            # 【新增】生成摘要向量
+            try:
+                await self._generate_summary_embedding(db, summary)
+            except Exception as e:
+                logger.error(f"生成摘要向量失败（不影响摘要创建）: {e}")
+            
             # 10. 更新topic的summary_id
+            await self._bind_summary_to_topic(db, topic.id, summary.id)
             topic.summary_id = summary.id
-            await db.commit()
             logger.info(f"   🔗 已关联到Topic")
             
             # 11. 记录判定任务
@@ -261,9 +270,15 @@ class SummaryService:
             await db.commit()
             await db.refresh(summary)
             
+            # 【新增】生成摘要向量
+            try:
+                await self._generate_summary_embedding(db, summary)
+            except Exception as e:
+                logger.error(f"生成摘要向量失败（不影响摘要创建）: {e}")
+            
             # 10. 更新topic的summary_id
+            await self._bind_summary_to_topic(db, topic.id, summary.id)
             topic.summary_id = summary.id
-            await db.commit()
             
             # 11. 记录判定任务
             await self._record_judgement(
@@ -284,6 +299,65 @@ class SummaryService:
             logger.error(f"完整堆栈:\n{traceback.format_exc()}")
             print(f"❌ 增量摘要生成失败 (Topic {topic.id}): {e}")
             return None
+    
+    async def _generate_summary_embedding(
+        self,
+        db: AsyncSession,
+        summary: Summary
+    ) -> Embedding:
+        """
+        为摘要生成向量
+        
+        Args:
+            db: 数据库会话
+            summary: 摘要对象
+        
+        Returns:
+            Embedding对象
+        """
+        logger.info(f"   🔢 开始为摘要生成向量 (Summary ID: {summary.id})")
+        
+        try:
+            # 生成向量
+            vectors = await self.embedding_provider.embedding([summary.content])
+            
+            # 保存到PostgreSQL
+            embedding = Embedding(
+                object_type="topic_summary",
+                object_id=summary.id,
+                provider=self.embedding_provider.get_provider_name(),
+                model=self.embedding_provider.model,
+                vector=vectors[0]
+            )
+            db.add(embedding)
+            await db.commit()
+            
+            logger.info(f"   ✅ 摘要向量生成完成 (Embedding ID: {embedding.id})")
+            
+            # 同步到Chroma
+            try:
+                vector_service = get_vector_service()
+                if vector_service.db_type == "chroma":
+                    vector_service.add_embeddings(
+                        ids=[f"topic_summary_{summary.id}"],
+                        embeddings=[vectors[0]],
+                        metadatas=[{
+                            "object_type": "topic_summary",
+                            "object_id": int(summary.id),
+                            "topic_id": int(summary.topic_id),
+                            "generated_at": summary.generated_at.timestamp()
+                        }],
+                        documents=[summary.content[:500]]
+                    )
+                    logger.info(f"   ✅ 向量已同步到Chroma")
+            except Exception as e:
+                logger.warning(f"   ⚠️  Chroma同步失败（不影响主流程）: {e}")
+            
+            return embedding
+            
+        except Exception as e:
+            logger.error(f"摘要向量生成失败: {e}")
+            raise
     
     def _select_key_nodes(self, nodes: List[TopicNode]) -> List[TopicNode]:
         """
@@ -445,7 +519,14 @@ class SummaryService:
         return prompt
     
     def _parse_summary_response(self, response) -> Dict:
-        """解析摘要响应"""
+        """
+        解析摘要响应
+        
+        【Bug修复】
+        1. 如果JSON被截断，不要保存原始JSON字符串
+        2. 提取纯文本内容，移除JSON格式标记
+        3. 确保返回的一定是dict，而不是字符串
+        """
         try:
             # 如果response是dict（来自LLM provider），提取content字段
             if isinstance(response, dict):
@@ -470,28 +551,69 @@ class SummaryService:
             if "summary" not in data:
                 raise ValueError("Missing summary field")
             
-            logger.info(f"   ✅ 成功解析JSON格式摘要")
-            return data
+            # 【Bug修复】确保summary是字符串，不是嵌套的JSON
+            if isinstance(data["summary"], str):
+                logger.info(f"   ✅ 成功解析JSON格式摘要（长度: {len(data['summary'])} 字）")
+                return data
+            else:
+                logger.warning(f"   ⚠️  summary字段不是字符串，转换为字符串")
+                data["summary"] = str(data["summary"])
+                return data
             
         except json.JSONDecodeError as e:
             # 降级：尝试查找JSON部分
-            logger.warning(f"JSON解析失败，尝试提取JSON部分: {e}")
+            logger.warning(f"JSON解析失败: {e}")
             
             # 尝试从文本中提取JSON
-            json_data = self._extract_json_from_text(content_clean if 'content_clean' in locals() else content)
-            if json_data:
-                logger.info(f"   ✅ 从文本中成功提取JSON")
-                return json_data
+            content_to_parse = content_clean if 'content_clean' in locals() else content
+            json_data = self._extract_json_from_text(content_to_parse)
             
-            # 最终降级：使用原始文本作为摘要
-            logger.warning(f"   ⚠️  无法提取JSON，使用原始文本")
-            fallback_text = content_clean if 'content_clean' in locals() else (content if isinstance(content, str) else str(response))
+            if json_data and "summary" in json_data:
+                # 【Bug修复】验证提取的JSON是否完整
+                if isinstance(json_data["summary"], str) and len(json_data["summary"]) > 50:
+                    logger.info(f"   ✅ 从文本中成功提取JSON（摘要长度: {len(json_data['summary'])} 字）")
+                    return json_data
+                else:
+                    logger.warning(f"   ⚠️  提取的JSON不完整，使用纯文本降级")
+            
+            # 【Bug修复】最终降级：提取纯文本，移除JSON标记
+            logger.warning(f"   ⚠️  无法提取有效JSON，使用纯文本")
+            fallback_text = content_to_parse if isinstance(content_to_parse, str) else str(content)
+            
+            # 移除JSON格式标记（如果存在）
+            import re
+            # 尝试提取JSON中的summary值（即使JSON不完整）
+            summary_match = re.search(r'"summary"\s*:\s*"([^"]+(?:"[^"]*")*[^"]*)"', fallback_text, re.DOTALL)
+            if summary_match:
+                extracted_summary = summary_match.group(1)
+                # 处理转义字符
+                extracted_summary = extracted_summary.replace('\\"', '"').replace('\\n', '\n')
+                logger.info(f"   ✅ 从不完整JSON中提取summary字段（长度: {len(extracted_summary)} 字）")
+                return {
+                    "summary": extracted_summary,
+                    "key_points": []
+                }
+            
+            # 如果连summary字段都提取不到，使用原始文本（去除JSON标记）
+            # 移除开头的 {"summary": " 和结尾的 "
+            clean_text = re.sub(r'^\s*\{\s*"summary"\s*:\s*"', '', fallback_text)
+            clean_text = re.sub(r'"\s*[,}]?\s*$', '', clean_text)
+            
+            # 如果清理后的文本太短或为空，使用原文
+            if len(clean_text.strip()) < 20:
+                clean_text = fallback_text
+            
+            # 【重要】不要截断！保留完整内容
+            logger.info(f"   ℹ️  使用清理后的文本（长度: {len(clean_text)} 字）")
             return {
-                "summary": fallback_text[:500],
+                "summary": clean_text.strip(),
                 "key_points": []
             }
+            
         except Exception as e:
             logger.error(f"解析响应时出错: {e}")
+            import traceback
+            logger.error(f"完整堆栈:\n{traceback.format_exc()}")
             return {
                 "summary": f"摘要解析失败：{str(e)}",
                 "key_points": []
@@ -592,22 +714,41 @@ class SummaryService:
                 logger.info(f"   ✅ 从文本中成功提取JSON")
                 return json_data
             
-            # 最终降级：使用原始文本作为摘要
-            logger.warning(f"   ⚠️  无法提取JSON，使用原始文本")
-            fallback_text = content_clean if 'content_clean' in locals() else (content if isinstance(content, str) else str(response))
-            return {
-                "needs_update": True,
-                "updated_summary": fallback_text[:500],
-                "new_key_points": [],
-                "change_reason": "Parsed from text"
-            }
-        except Exception as e:
-            logger.error(f"解析响应时出错: {e}")
+            # 【Bug修复】最终降级：尝试提取updated_summary字段
+            logger.warning(f"   ⚠️  无法提取完整JSON，尝试提取updated_summary字段")
+            content_to_parse = content_clean if 'content_clean' in locals() else content
+            fallback_text = content_to_parse if isinstance(content_to_parse, str) else str(response)
+            
+            import re
+            summary_match = re.search(r'"updated_summary"\s*:\s*"([^"]+)"', fallback_text, re.DOTALL)
+            if summary_match:
+                extracted_summary = summary_match.group(1).replace('\\"', '"').replace('\\n', '\n')
+                logger.info(f"   ✅ 从不完整JSON中提取updated_summary字段（长度: {len(extracted_summary)} 字）")
+                return {
+                    "needs_update": True,
+                    "updated_summary": extracted_summary,
+                    "new_key_points": [],
+                    "change_reason": "从不完整JSON中恢复"
+                }
+            
+            # 如果连updated_summary都提取不到，标记为无需更新
+            logger.warning(f"   ⚠️  无法提取有效内容，标记为无需更新")
             return {
                 "needs_update": False,
-                "updated_summary": f"摘要解析失败：{str(e)}",
+                "updated_summary": "",
                 "new_key_points": [],
-                "change_reason": f"Error: {str(e)}"
+                "change_reason": "JSON解析失败，无法提取有效内容"
+            }
+            
+        except Exception as e:
+            logger.error(f"解析增量响应时出错: {e}")
+            import traceback
+            logger.error(f"完整堆栈:\n{traceback.format_exc()}")
+            return {
+                "needs_update": False,
+                "updated_summary": "",
+                "new_key_points": [],
+                "change_reason": f"解析失败：{str(e)}"
             }
     
     async def _should_update(
@@ -701,8 +842,14 @@ class SummaryService:
         await db.commit()
         await db.refresh(summary)
         
+        # 【新增】为占位摘要生成向量
+        try:
+            await self._generate_summary_embedding(db, summary)
+        except Exception as e:
+            logger.error(f"生成占位摘要向量失败（不影响摘要创建）: {e}")
+        
+        await self._bind_summary_to_topic(db, topic.id, summary.id)
         topic.summary_id = summary.id
-        await db.commit()
         
         return summary
     
@@ -751,11 +898,11 @@ class SummaryService:
         judgement = LLMJudgement(
             type=type,
             status="completed",
-            request_data={
+            request={
                 "topic_id": topic_id,
                 "prompt": prompt_str[:1000]  # 截断过长的prompt
             },
-            response_data=summary_data,
+            response=summary_data,
             provider=self.llm_provider.get_provider_name(),
             model=self.llm_provider.model,
             latency_ms=0,  # TODO: 记录实际延迟
@@ -763,5 +910,19 @@ class SummaryService:
             tokens_completion=0
         )
         db.add(judgement)
+        await db.commit()
+
+    async def _bind_summary_to_topic(
+        self,
+        db: AsyncSession,
+        topic_id: int,
+        summary_id: int
+    ):
+        """确保Summary与Topic建立关联"""
+        await db.execute(
+            update(Topic)
+            .where(Topic.id == topic_id)
+            .values(summary_id=summary_id, updated_at=now_cn())
+        )
         await db.commit()
 

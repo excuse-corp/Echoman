@@ -7,7 +7,7 @@ import logging
 from typing import Dict, List, Any, Optional
 from datetime import datetime, timedelta
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func, and_, desc
+from sqlalchemy import select, func, and_, desc, delete
 
 from app.models import Topic, CategoryDayMetrics
 from app.utils.timezone import now_cn
@@ -205,15 +205,13 @@ class CategoryMetricsService:
         target_date = since_date or now.date()
         
         if rebuild:
-            # 删除旧数据
-            stmt = select(CategoryDayMetrics).where(
+            # 删除旧数据（按日覆盖）
+            delete_stmt = delete(CategoryDayMetrics).where(
                 CategoryDayMetrics.day == target_date
             )
-            result = await self.db.execute(stmt)
-            old_records = result.scalars().all()
-            for record in old_records:
-                await self.db.delete(record)
-            logger.info(f"删除了 {len(old_records)} 条旧数据")
+            result = await self.db.execute(delete_stmt)
+            deleted_count = result.rowcount or 0
+            logger.info(f"删除了 {deleted_count} 条旧数据")
         
         # 计算截止到目标日期的近一年数据
         since = datetime.combine(target_date, datetime.min.time()) - timedelta(days=365)

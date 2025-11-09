@@ -26,7 +26,7 @@ class HeatNormalizationService:
         self.db = db
         self.platform_weights = settings.platform_weights_dict
     
-    async def normalize_halfday_heat(self, period: str) -> Dict[str, Any]:
+    async def normalize_period_heat(self, period: str) -> Dict[str, Any]:
         """
         对归并周期内的热度值进行归一化
         

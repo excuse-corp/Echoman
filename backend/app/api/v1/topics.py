@@ -8,9 +8,9 @@ from sqlalchemy import select, func, desc
 from sqlalchemy.orm import joinedload
 
 from app.core import get_db
-from app.models import Topic, TopicNode, SourceItem
+from app.models import Topic, TopicNode, SourceItem, Summary
 from app.schemas.common import PaginatedResponse
-from app.schemas.topic import TopicResponse, TimelineNodeResponse
+from app.schemas.topic import TopicResponse, TimelineNodeResponse, TopicTimelineResponse
 
 router = APIRouter()
 
@@ -174,7 +174,7 @@ async def get_topic_detail(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.get("/{topic_id}/timeline", response_model=PaginatedResponse[TimelineNodeResponse])
+@router.get("/{topic_id}/timeline", response_model=TopicTimelineResponse)
 async def get_topic_timeline(
     topic_id: int,
     platform: Optional[str] = Query(None, description="平台筛选（weibo|zhihu|toutiao|sina|netease|baidu|hupu）"),
@@ -185,7 +185,8 @@ async def get_topic_timeline(
     """
     获取话题时间线
     
-    返回该话题下的所有事件节点，按时间倒序排列。
+    返回该话题下的所有事件节点，按内容发布时间倒序排列（如发布时间为空则按采集时间）。
+    相同内容的多次报道会被聚合显示。
     
     - **topic_id**: 话题ID
     - **platform**: 可选，平台筛选
@@ -193,68 +194,72 @@ async def get_topic_timeline(
     - **size**: 每页大小（默认50，最大100）
     """
     try:
-        # 验证话题是否存在
-        topic_stmt = select(Topic).where(Topic.id == topic_id)
+        # 验证话题是否存在并获取摘要
+        topic_stmt = select(Topic).options(joinedload(Topic.summary)).where(Topic.id == topic_id)
         topic_result = await db.execute(topic_stmt)
         topic = topic_result.scalar_one_or_none()
         
         if not topic:
             raise HTTPException(status_code=404, detail="话题不存在")
         
-        # 构建查询 - JOIN topic_nodes 和 source_items
+        # 获取 Topic 摘要
+        topic_summary_text = None
+        if topic.summary:
+            topic_summary_text = topic.summary.content
+        
+        # 构建查询 - 获取所有节点（不分页，用于聚合）
         query = (
             select(TopicNode)
             .options(joinedload(TopicNode.source_item))
             .where(TopicNode.topic_id == topic_id)
+            .join(SourceItem, TopicNode.source_item_id == SourceItem.id)
         )
         
-        # 平台筛选（需要通过 JOIN 实现）
+        # 平台筛选
         if platform:
-            query = query.join(SourceItem, TopicNode.source_item_id == SourceItem.id)
             query = query.where(SourceItem.platform == platform)
         
-        # 获取总数
-        count_query = select(func.count()).select_from(
-            select(TopicNode.id)
-            .where(TopicNode.topic_id == topic_id)
-            .subquery()
-        )
-        if platform:
-            count_query = select(func.count()).select_from(
-                select(TopicNode.id)
-                .join(SourceItem, TopicNode.source_item_id == SourceItem.id)
-                .where(TopicNode.topic_id == topic_id, SourceItem.platform == platform)
-                .subquery()
-            )
-        
-        count_result = await db.execute(count_query)
-        total = count_result.scalar()
-        
-        # 按 appended_at 倒序排序
-        query = query.order_by(desc(TopicNode.appended_at))
-        
-        # 分页
-        query = query.offset((page - 1) * size).limit(size)
+        # 按内容发布时间倒序排序
+        query = query.order_by(desc(func.coalesce(SourceItem.published_at, SourceItem.fetched_at)))
         
         # 执行查询
         result = await db.execute(query)
-        nodes = result.scalars().all()
+        all_nodes = result.scalars().all()
         
-        # 转换为响应模型
-        items = []
-        for node in nodes:
+        # 聚合相同内容的节点
+        # 使用 (title, content) 作为分组键
+        from collections import defaultdict
+        groups = defaultdict(list)
+        
+        for node in all_nodes:
             source = node.source_item
             if not source:
                 continue
             
-            # 计算互动数（从 interactions 字段提取）
+            # 使用标题和内容作为分组键
+            group_key = (source.title.strip(), (source.summary or source.title).strip())
+            groups[group_key].append(node)
+        
+        # 转换为响应模型（聚合后的）
+        aggregated_items = []
+        for (title, content), group_nodes in groups.items():
+            # 按时间排序（最新的在前）
+            group_nodes.sort(
+                key=lambda n: n.source_item.published_at or n.source_item.fetched_at,
+                reverse=True
+            )
+            
+            # 使用第一个节点作为代表
+            primary_node = group_nodes[0]
+            primary_source = primary_node.source_item
+            
+            # 计算互动数
             engagement = None
-            if source.interactions:
-                # 尝试从不同字段提取互动数
+            if primary_source.interactions:
                 engagement = (
-                    source.interactions.get('hot_score') or
-                    source.interactions.get('engagement') or
-                    source.interactions.get('interactions')
+                    primary_source.interactions.get('hot_score') or
+                    primary_source.interactions.get('engagement') or
+                    primary_source.interactions.get('interactions')
                 )
                 if engagement and isinstance(engagement, str):
                     try:
@@ -262,25 +267,55 @@ async def get_topic_timeline(
                     except ValueError:
                         engagement = None
             
-            items.append(
+            # 收集所有平台、链接与时间
+            all_platforms = []
+            all_urls = []
+            all_timestamps = []
+            for n in group_nodes:
+                src = n.source_item
+                all_platforms.append(src.platform)
+                all_urls.append(src.url)
+                # 优先使用内容发布时间，缺失则回退到采集时间，再回退到代表节点时间
+                ts = src.published_at or src.fetched_at or primary_source.published_at or primary_source.fetched_at
+                all_timestamps.append(ts)
+            
+            # 计算时间范围
+            time_range_start = min(all_timestamps) if len(all_timestamps) > 1 else None
+            time_range_end = max(all_timestamps) if len(all_timestamps) > 1 else None
+            
+            aggregated_items.append(
                 TimelineNodeResponse(
-                    node_id=node.id,
+                    node_id=primary_node.id,
                     topic_id=topic_id,
-                    timestamp=source.published_at if source.published_at else source.fetched_at,
-                    title=source.title,
-                    content=source.summary or source.title,
-                    source_platform=source.platform,
-                    source_url=source.url,
-                    captured_at=source.fetched_at,
-                    engagement=engagement
+                    timestamp=primary_source.published_at if primary_source.published_at else primary_source.fetched_at,
+                    title=primary_source.title,
+                    content=primary_source.summary or primary_source.title,
+                    source_platform=primary_source.platform,
+                    source_url=primary_source.url,
+                    captured_at=primary_source.fetched_at,
+                    engagement=engagement,
+                    # 聚合信息
+                    duplicate_count=len(group_nodes) if len(group_nodes) > 1 else None,
+                    time_range_start=time_range_start,
+                    time_range_end=time_range_end,
+                    all_platforms=all_platforms if len(group_nodes) > 1 else None,
+                    all_source_urls=all_urls if len(group_nodes) > 1 else None,
+                    all_timestamps=all_timestamps if len(group_nodes) > 1 else None
                 )
             )
         
-        return PaginatedResponse(
-            page=page,
-            size=size,
-            total=total,
-            items=items
+        # 按时间戳倒序排序聚合后的结果
+        aggregated_items.sort(key=lambda x: x.timestamp, reverse=True)
+        
+        # 分页
+        total = len(aggregated_items)
+        start_idx = (page - 1) * size
+        end_idx = start_idx + size
+        paginated_items = aggregated_items[start_idx:end_idx]
+        
+        return TopicTimelineResponse(
+            topic_summary=topic_summary_text,
+            items=paginated_items
         )
     
     except HTTPException:

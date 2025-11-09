@@ -51,6 +51,13 @@ class TimelineNodeResponse(BaseModel):
     source_url: str = Field(..., description="原文链接")
     captured_at: datetime = Field(..., description="采集时间")
     engagement: Optional[int] = Field(None, description="互动数")
+    # 聚合字段（用于相同内容的多次报道）
+    duplicate_count: Optional[int] = Field(None, description="重复报道次数")
+    time_range_start: Optional[datetime] = Field(None, description="时间范围开始")
+    time_range_end: Optional[datetime] = Field(None, description="时间范围结束")
+    all_platforms: Optional[List[str]] = Field(None, description="所有报道平台列表")
+    all_source_urls: Optional[List[str]] = Field(None, description="所有原文链接")
+    all_timestamps: Optional[List[datetime]] = Field(None, description="所有原文对应的时间戳")
     
     class Config:
         from_attributes = True
@@ -58,6 +65,7 @@ class TimelineNodeResponse(BaseModel):
 
 class TopicTimelineResponse(BaseModel):
     """话题时间线响应"""
+    topic_summary: Optional[str] = Field(None, description="话题摘要")
     items: List[TimelineNodeResponse] = Field(..., description="时间线节点列表")
 
 

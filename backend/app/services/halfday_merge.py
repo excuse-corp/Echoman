@@ -80,7 +80,7 @@ class EventMergeService:
         self.max_completion_tokens = 300  # 判定结果最大 token
         self.max_item_summary_tokens = 150  # 每个新闻摘要最大 token
     
-    async def run_halfday_merge(self, period: str) -> Dict[str, Any]:
+    async def run_event_merge(self, period: str) -> Dict[str, Any]:
         """
         执行新事件归并
         
@@ -171,6 +171,7 @@ class EventMergeService:
             vectors = await self.embedding_provider.embedding(texts)
             
             # 保存向量到PostgreSQL
+            embeddings_to_create = []
             for item, vector in zip(items, vectors):
                 embedding = Embedding(
                     object_type="source_item",
@@ -180,9 +181,14 @@ class EventMergeService:
                     vector=vector
                 )
                 self.db.add(embedding)
-                
-                # 更新 source_item 的 embedding_id
-                # (这里简化处理，实际应该在 commit 后更新)
+                embeddings_to_create.append((item, embedding))
+            
+            # 先提交以获取embedding的ID
+            await self.db.flush()
+            
+            # 更新 source_item 的 embedding_id
+            for item, embedding in embeddings_to_create:
+                item.embedding_id = embedding.id
             
             await self.db.commit()
             

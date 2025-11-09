@@ -66,6 +66,7 @@ class Topic(Base):
     # ========== 关系定义 ==========
     nodes = relationship("TopicNode", back_populates="topic", cascade="all, delete-orphan")
     period_heats = relationship("TopicPeriodHeat", back_populates="topic", cascade="all, delete-orphan")
+    summary = relationship("Summary", primaryjoin="Topic.summary_id==Summary.id", foreign_keys=[summary_id], uselist=False, lazy="joined")
     
     # ========== 索引定义 ==========
     __table_args__ = (

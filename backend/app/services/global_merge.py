@@ -16,7 +16,7 @@
                              ↓
   ┌─────────────────────────────────────────────────────────────┐
   │ 阶段二：整体归并（本模块，12:30/22:30）                      │
-  │ - 与历史Topic库比对（向量检索 + LLM判定）                   │
+  │ - 与最近7天Topic比对（向量检索 + LLM判定）                   │
   │ - 决策：merge（追加到已有Topic）or new（创建新Topic）       │
   │ - 更新热度、分类、摘要                                       │
   │ - 输出：更新Topics表 + TopicNodes + 前端数据更新            │
@@ -24,7 +24,7 @@
 
 【本模块功能】阶段二：整体归并
 - 输入：status=pending_global_merge 且 period 匹配的数据
-- 处理：向量检索历史Topics → LLM关联判定 → merge or new
+- 处理：向量检索近7天Topics → LLM关联判定 → merge or new
 - 输出：
   * Topics 表：新建或更新主题
   * TopicNodes 表：记录主题节点
@@ -92,7 +92,7 @@ class GlobalMergeService:
     """
     
     # 性能优化配置
-    MAX_BATCH_SIZE = 50  # 每次最多处理50个新事件组
+    MAX_BATCH_SIZE = 200  # 每次最多处理200个新事件组（优化提升4x）
     MAX_TIMEOUT_SECONDS = 900  # 15分钟超时
     
     def __init__(self, db: AsyncSession):
@@ -159,9 +159,10 @@ class GlobalMergeService:
         new_topics = []  # 收集新创建的topics，用于批量生成摘要
         
         # 并发批处理配置
-        CONCURRENT_BATCH_SIZE = 10  # 每批并行处理10个group
+        # FIXME: 暂时禁用并发处理，避免SQLAlchemy会话冲突（详见GLOBAL_MERGE_BUG_REPORT.md）
+        CONCURRENT_BATCH_SIZE = 1  # 串行处理，避免greenlet_spawn错误
         
-        print(f"🚀 开始并行处理（每批{CONCURRENT_BATCH_SIZE}个）...")
+        print(f"🚀 开始处理（每批{CONCURRENT_BATCH_SIZE}个）...")
         
         for i in range(0, len(merge_groups), CONCURRENT_BATCH_SIZE):
             batch = merge_groups[i:i + CONCURRENT_BATCH_SIZE]
@@ -202,8 +203,8 @@ class GlobalMergeService:
         
         print(f"✅ 归并完成: merge={merge_count}, new={new_count}, 耗时={duration_seconds:.2f}秒")
         
-        # 3. 返回结果（包含性能监控）
-        return {
+        # 4. 更新前端数据
+        merge_stats = {
             "status": "success",
             "period": period,
             "total_groups": total_groups,
@@ -214,6 +215,16 @@ class GlobalMergeService:
             "duration_seconds": duration_seconds,
             "avg_seconds_per_group": duration_seconds / len(merge_groups) if merge_groups else 0
         }
+        
+        # 触发前端数据更新
+        try:
+            from app.services.frontend_update_service import update_frontend_after_merge
+            await update_frontend_after_merge(self.db, period, merge_stats)
+        except Exception as e:
+            print(f"  ⚠️  前端数据更新失败（不影响归并）: {e}")
+        
+        # 5. 返回结果（包含性能监控）
+        return merge_stats
     
     async def _get_pending_merge_groups(self, period: str) -> List[Dict[str, Any]]:
         """获取待整体归并的事件组"""
@@ -312,21 +323,29 @@ class GlobalMergeService:
         top_k: int = None
     ) -> List[Dict[str, Any]]:
         """
-        向量检索候选 Topics
+        向量检索候选 Topics（优化版：使用Summary向量）
         
-        【性能优化】每个事件最多召回 Top-K 候选 Topics（默认10个）
+        【性能优化】
+        1. 直接检索topic_summary向量（质量更高，数量更少）
+        2. 每个事件最多召回 Top-K 候选 Topics（默认3个，最多3个）
+        3. 只与最近7天的Topic比对，避免与过时事件关联
+        4. 相似度阈值过滤（≥0.5），过滤明显不相关的候选
         
         Args:
             item: 代表性数据项
-            top_k: 返回数量（默认使用配置，推荐10）
+            top_k: 返回数量（默认使用配置，最多3个）
             
         Returns:
-            候选 Topics 列表
+            候选 Topics 列表（相似度由高到低，最多3个）
         """
         top_k = top_k or settings.global_merge_topk_candidates
         
-        # 确保不超过10个候选（性能优化）
-        top_k = min(top_k, 10)
+        # 确保不超过3个候选（性能优化+成本控制）
+        top_k = min(top_k, 3)
+        
+        # 计算7天前的时间（只检索最近一周的topic）
+        from datetime import timedelta
+        one_week_ago = now_cn() - timedelta(days=7)
         
         # 获取 item 的向量
         stmt = select(Embedding).where(
@@ -347,62 +366,64 @@ class GlobalMergeService:
         
         if vector_service.db_type == "chroma":
             try:
-                # 使用Chroma搜索相似向量
+                # 【优化】直接搜索topic_summary向量，而非source_item向量
                 ids, distances, metadatas = vector_service.search_similar(
                     query_embedding=item_embedding.vector,
-                    top_k=top_k * 3,  # 多召回一些，然后过滤
-                    where={"object_type": "source_item"}  # 只搜索source_item类型
+                    top_k=top_k * 2,  # 多召回一些，然后时间过滤
+                    where={"object_type": "topic_summary"}  # 搜索Summary向量
                 )
                 
                 if ids:
-                    # 从搜索结果中提取topic_id，并去重
                     seen_topics = set()
                     for id_str, distance, metadata in zip(ids, distances, metadatas):
-                        # 从source_item查找对应的topic
-                        source_id = metadata.get("object_id")
-                        if source_id:
-                            stmt = select(SourceItem).where(SourceItem.id == source_id)
-                            result = await self.db.execute(stmt)
-                            source = result.scalar_one_or_none()
+                        similarity = 1 - distance  # 距离转相似度
+                        
+                        # 【优化】相似度阈值过滤
+                        if similarity < settings.global_merge_similarity_threshold:
+                            continue  # 跳过相似度过低的候选
+                        
+                        # 从metadata直接获取topic_id（无需查询TopicNode）
+                        topic_id = metadata.get("topic_id")
+                        if not topic_id or topic_id in seen_topics:
+                            continue
+                        
+                        # 查询Topic（只检索最近7天的活跃Topic）
+                        stmt = select(Topic).where(
+                            and_(
+                                Topic.id == topic_id,
+                                Topic.status == "active",
+                                Topic.last_active >= one_week_ago  # 时间过滤
+                            )
+                        )
+                        result = await self.db.execute(stmt)
+                        topic = result.scalar_one_or_none()
+                        
+                        if topic:
+                            seen_topics.add(topic.id)
+                            candidates.append({
+                                "topic_id": topic.id,
+                                "title": topic.title_key,
+                                "last_active": topic.last_active,
+                                "length_hours": (topic.last_active - topic.first_seen).total_seconds() / 3600,
+                                "similarity": similarity
+                            })
                             
-                            if source and source.merge_status == "merged":
-                                # 查找这个source_item对应的topic
-                                stmt = select(TopicNode, Topic).join(
-                                    Topic, TopicNode.topic_id == Topic.id
-                                ).where(
-                                    and_(
-                                        TopicNode.source_item_id == source.id,
-                                        Topic.status == "active"
-                                    )
-                                )
-                                result = await self.db.execute(stmt)
-                                node_topic = result.first()
-                                
-                                if node_topic and node_topic[1].id not in seen_topics:
-                                    topic = node_topic[1]
-                                    seen_topics.add(topic.id)
-                                    
-                                    candidates.append({
-                                        "topic_id": topic.id,
-                                        "title": topic.title_key,
-                                        "last_active": topic.last_active,
-                                        "length_hours": (topic.last_active - topic.first_seen).total_seconds() / 3600,
-                                        "similarity": 1 - distance  # 距离转相似度
-                                    })
-                                    
-                                    if len(candidates) >= top_k:
-                                        break
+                            if len(candidates) >= top_k:
+                                break
                     
                     if candidates:
-                        print(f"✅ Chroma检索到 {len(candidates)} 个候选Topics")
+                        print(f"✅ 使用Summary向量检索到 {len(candidates)} 个候选Topics（相似度 ≥ {settings.global_merge_similarity_threshold}）")
                         return candidates
                         
             except Exception as e:
-                print(f"⚠️  Chroma搜索失败，回退到简单查询: {e}")
+                print(f"⚠️  Summary向量搜索失败，回退到简单查询: {e}")
         
-        # 回退方案：获取最近活跃的topics
+        # 回退方案：获取最近活跃的topics（只检索最近7天的）
         stmt = select(Topic).where(
-            Topic.status == "active"
+            and_(
+                Topic.status == "active",
+                Topic.last_active >= one_week_ago  # 只检索最近7天的topic
+            )
         ).order_by(
             Topic.last_active.desc()
         ).limit(top_k)
@@ -459,6 +480,7 @@ class GlobalMergeService:
             )
             candidates_desc.append(
                 f"【候选主题 {idx}】\n"
+                f"主题ID: {cand['topic_id']}\n"
                 f"标题: {cand_title}\n"
                 f"最后活跃: {cand['last_active'].strftime('%Y-%m-%d %H:%M')}\n"
                 f"持续时长: {cand['length_hours']:.1f} 小时"
@@ -474,7 +496,7 @@ class GlobalMergeService:
 要求输出 JSON 格式：
 {{
   "decision": "merge" 或 "new",
-  "target_topic_id": 候选主题ID（如果是merge），
+  "target_topic_id": 上述候选主题的真实主题ID（数字），
   "confidence": 0.0-1.0,
   "reason": "判断理由"
 }}
@@ -518,6 +540,11 @@ class GlobalMergeService:
                 f"Completion: {response.get('usage', {}).get('completion_tokens', 0)} tokens, "
                 f"决策: {result.get('decision')} (置信度: {result.get('confidence')})"
             )
+            resolved_topic_id = self._resolve_llm_target_topic_id(
+                result.get("target_topic_id"),
+                candidates
+            )
+            result["resolved_topic_id"] = resolved_topic_id
             
             # 记录判定
             judgement = LLMJudgement(
@@ -542,10 +569,11 @@ class GlobalMergeService:
             if (
                 result.get("decision") == "merge" 
                 and result.get("confidence", 0) >= settings.global_merge_confidence_threshold
+                and resolved_topic_id is not None
             ):
                 return {
                     "action": "merge",
-                    "target_topic_id": result.get("target_topic_id"),
+                    "target_topic_id": resolved_topic_id,
                     "confidence": result.get("confidence"),
                     "reason": result.get("reason")
                 }
@@ -560,6 +588,51 @@ class GlobalMergeService:
             print(f"❌ LLM 判定失败: {e}")
             # 失败时保守处理：创建新 Topic
             return {"action": "new", "confidence": 0.5}
+
+    def _resolve_llm_target_topic_id(
+        self,
+        raw_target: Any,
+        candidates: List[Dict[str, Any]]
+    ) -> Optional[int]:
+        """将LLM返回的target_topic_id解析为真实Topic ID"""
+        if raw_target is None:
+            return None
+        
+        candidate_ids = [cand["topic_id"] for cand in candidates]
+        
+        # 如果直接是整数且存在于候选ID列表，直接使用
+        if isinstance(raw_target, int):
+            if raw_target in candidate_ids:
+                return raw_target
+            # 兼容只返回序号的情况
+            if 1 <= raw_target <= len(candidate_ids):
+                return candidate_ids[raw_target - 1]
+            return None
+        
+        # 如果是浮点数（LLM可能返回1.0）
+        if isinstance(raw_target, float):
+            raw_int = int(raw_target)
+            if raw_int in candidate_ids:
+                return raw_int
+            if 1 <= raw_int <= len(candidate_ids):
+                return candidate_ids[raw_int - 1]
+            return None
+        
+        # 如果是字符串，尝试解析数字
+        if isinstance(raw_target, str):
+            raw_target = raw_target.strip()
+            import re
+            match = re.search(r'\d+', raw_target)
+            if not match:
+                return None
+            value = int(match.group())
+            if value in candidate_ids:
+                return value
+            if 1 <= value <= len(candidate_ids):
+                return candidate_ids[value - 1]
+            return None
+        
+        return None
     
     async def _create_new_topic(
         self,
@@ -570,57 +643,76 @@ class GlobalMergeService:
         items = event_group["items"]
         representative = event_group["representative"]
         
-        # 创建 Topic
-        topic = Topic(
-            title_key=representative.title,
-            first_seen=min(item.fetched_at for item in items),
-            last_active=max(item.fetched_at for item in items),
-            status="active",
-            intensity_total=len(items),
-            current_heat_normalized=sum(
-                item.heat_normalized or 0 for item in items
-            ) / len(items) if items else 0
-        )
-        self.db.add(topic)
-        await self.db.flush()  # 获取 topic.id
-        
-        # 创建 TopicNodes
-        for item in items:
-            node = TopicNode(
-                topic_id=topic.id,
-                source_item_id=item.id,
-                appended_at=now_cn()
-            )
-            self.db.add(node)
-            
-            # 更新 item 状态
-            item.merge_status = "merged"
-        
-        # 更新半日热度记录
-        await self._update_topic_heat(topic, event_group, period)
-        
-        await self.db.commit()
-        
-        print(f"  ✨ 创建新 Topic: {topic.id} - {topic.title_key}")
-        
-        # 【性能优化】分类和摘要生成延迟到批量处理
-        # 异步执行分类（不等待摘要生成）
         try:
-            category, confidence, method = await self.classification_service.classify_topic(
-                self.db, topic, force_llm=False
+            # 创建 Topic
+            topic = Topic(
+                title_key=representative.title,
+                first_seen=min(item.fetched_at for item in items),
+                last_active=max(item.fetched_at for item in items),
+                status="active",
+                intensity_total=len(items),
+                current_heat_normalized=sum(
+                    item.heat_normalized or 0 for item in items
+                ) / len(items) if items else 0
             )
-            topic.category = category
-            topic.category_confidence = confidence
-            topic.category_method = method
-            topic.category_updated_at = now_cn()
+            self.db.add(topic)
+            await self.db.flush()  # 获取 topic.id
+            
+            # 创建 TopicNodes
+            nodes_created = 0
+            for item in items:
+                node = TopicNode(
+                    topic_id=topic.id,
+                    source_item_id=item.id,
+                    appended_at=now_cn()
+                )
+                self.db.add(node)
+                nodes_created += 1
+                
+                # 更新 item 状态
+                item.merge_status = "merged"
+            
+            # 更新半日热度记录
+            await self._update_topic_heat(topic, event_group, period)
+            
+            # 提交前flush，确保nodes被保存
+            await self.db.flush()
+            
+            # 最终提交
             await self.db.commit()
-            print(f"  📋 完成分类: {category} (置信度: {confidence:.2f})")
+            
+            print(f"  ✨ 创建新 Topic: {topic.id} - {topic.title_key} ({nodes_created} nodes)")
+            
+            # 【性能优化】分类和摘要生成延迟到批量处理
+            # 异步执行分类（不等待摘要生成）
+            try:
+                # 刷新会话以确保能查询到刚创建的nodes
+                await self.db.refresh(topic)
+                
+                category, confidence, method = await self.classification_service.classify_topic(
+                    self.db, topic, force_llm=False
+                )
+                topic.category = category
+                topic.category_confidence = confidence
+                topic.category_method = method
+                topic.category_updated_at = now_cn()
+                await self.db.commit()
+                print(f"  📋 完成分类: {category} (置信度: {confidence:.2f}, 方法: {method})")
+            except Exception as e:
+                logger.error(f"分类失败: {e}")
+                print(f"  ❌ 分类失败: {e}")
+                # 分类失败不影响Topic创建
+                await self.db.rollback()
+                await self.db.commit()  # 重新提交topic创建
+            
+            # 摘要生成将在批量处理中完成
+            return topic
+            
         except Exception as e:
-            logger.error(f"分类失败: {e}")
-            print(f"  ❌ 分类失败: {e}")
-        
-        # 摘要生成将在批量处理中完成
-        return topic
+            logger.error(f"创建Topic失败: {e}")
+            print(f"  ❌ 创建Topic失败: {e}")
+            await self.db.rollback()
+            raise  # 重新抛出异常，让上层处理
     
     async def _merge_to_topic(
         self,

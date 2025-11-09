@@ -124,11 +124,15 @@ export function ExplorerPage() {
     setDetailFallback(false);
     (async () => {
       try {
-        const [{ detail, fallback }, { nodes, fallback: fallbackTimeline }] = await Promise.all([
+        const [{ detail, fallback }, { nodes, topic_summary, fallback: fallbackTimeline }] = await Promise.all([
           getTopicDetail(selectedTopicId),
           getTimeline(selectedTopicId),
         ]);
         if (cancel) return;
+        // 如果 API 返回了 topic_summary，优先使用它
+        if (detail && topic_summary) {
+          detail.topic.summary = topic_summary;
+        }
         setDetail(detail);
         setTimeline(nodes);
         setTimelineFallback(fallbackTimeline);
