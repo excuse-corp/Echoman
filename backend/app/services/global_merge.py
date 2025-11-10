@@ -876,29 +876,50 @@ class GlobalMergeService:
     
     async def _generate_single_summary(self, topic: Topic) -> bool:
         """
-        为单个Topic生成摘要
+        为单个Topic生成摘要（使用独立数据库会话避免并发冲突）
         
         Returns:
             True if successful, False otherwise
         """
+        from app.core.database import get_async_session
+        
+        topic_id = topic.id
+        
         try:
-            print(f"  📝 开始生成摘要... (Topic {topic.id})")
-            summary = await self.summary_service.generate_full_summary(self.db, topic)
+            print(f"  📝 开始生成摘要... (Topic {topic_id})")
             
-            if summary and summary.method == "full":
-                print(f"  ✅ 摘要生成成功 (Topic {topic.id}, 方法: {summary.method})")
-                return True
-            elif summary and summary.method == "placeholder":
-                print(f"  ⚠️  创建了占位摘要 (Topic {topic.id})")
-                return False
-            else:
-                print(f"  ❌ 摘要生成失败 (Topic {topic.id})")
-                return False
+            # 为每个摘要生成任务创建独立的数据库会话，避免并发冲突
+            async_session_factory = get_async_session()
+            async with async_session_factory() as independent_db:
+                # 重新查询 topic（在独立会话中）
+                stmt = select(Topic).where(Topic.id == topic_id)
+                result = await independent_db.execute(stmt)
+                topic_in_session = result.scalar_one_or_none()
+                
+                if not topic_in_session:
+                    print(f"  ❌ Topic {topic_id} 不存在")
+                    return False
+                
+                # 使用独立会话生成摘要
+                summary = await self.summary_service.generate_full_summary(
+                    independent_db, 
+                    topic_in_session
+                )
+                
+                if summary and summary.method == "full":
+                    print(f"  ✅ 摘要生成成功 (Topic {topic_id}, 方法: {summary.method})")
+                    return True
+                elif summary and summary.method == "placeholder":
+                    print(f"  ⚠️  创建了占位摘要 (Topic {topic_id})")
+                    return False
+                else:
+                    print(f"  ❌ 摘要生成失败 (Topic {topic_id})")
+                    return False
                 
         except Exception as e:
-            logger.error(f"摘要生成失败 (Topic {topic.id}): {e}")
+            logger.error(f"摘要生成失败 (Topic {topic_id}): {e}")
             import traceback
             logger.error(f"完整堆栈:\n{traceback.format_exc()}")
-            print(f"  ❌ 摘要生成失败 (Topic {topic.id}): {e}")
+            print(f"  ❌ 摘要生成失败 (Topic {topic_id}): {e}")
             return False
 

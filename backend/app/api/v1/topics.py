@@ -20,6 +20,7 @@ async def list_topics(
     status: Optional[str] = Query(None, description="状态筛选（active|ended）"),
     category: Optional[str] = Query(None, description="分类筛选"),
     keyword: Optional[str] = Query(None, description="关键词搜索"),
+    today_only: bool = Query(False, description="是否只显示当日话题"),
     order: str = Query("echo_rank", description="排序方式"),
     page: int = Query(1, ge=1),
     size: int = Query(50, ge=1, le=100),
@@ -31,6 +32,7 @@ async def list_topics(
     - **status**: 状态筛选（active|ended）
     - **category**: 分类筛选（entertainment|current_affairs|sports_esports）
     - **keyword**: 关键词搜索
+    - **today_only**: 是否只显示当日话题（按 first_seen 筛选今天创建的话题）
     - **order**: 排序方式（echo_rank|last_active_desc|heat_desc|intensity_desc）
     - **page**: 页码
     - **size**: 每页大小（默认50）
@@ -38,6 +40,13 @@ async def list_topics(
     try:
         # 构建查询
         query = select(Topic)
+        
+        # 当日话题筛选
+        if today_only:
+            from datetime import datetime, time
+            from app.utils.timezone import now_cn
+            today_start = datetime.combine(now_cn().date(), time.min)
+            query = query.where(Topic.first_seen >= today_start)
         
         # 状态筛选
         if status:
@@ -113,6 +122,112 @@ async def list_topics(
                 "intensity_norm": round(heat_normalized, 4) if heat_normalized > 0 else 0,  # 0-1范围，前端转换为百分比
                 "length_hours": round(length_hours, 1),  # 回声长度（小时）
                 "length_days": round(length_hours / 24, 2),  # 保留天数字段（兼容性）
+                "first_seen": topic.first_seen.isoformat() if topic.first_seen else None,
+                "last_active": topic.last_active.isoformat() if topic.last_active else None,
+                "platforms": platforms,
+                "platform_mentions": platform_mentions,
+                "status": topic.status
+            })
+        
+        return {
+            "page": page,
+            "size": size,
+            "total": total,
+            "items": items
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/today")
+async def list_today_topics(
+    order: str = Query("echo_rank", description="排序方式"),
+    page: int = Query(1, ge=1),
+    size: int = Query(50, ge=1, le=100),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    获取当日话题列表（今天创建的话题）
+    
+    - **order**: 排序方式（echo_rank|last_active_desc|heat_desc|intensity_desc）
+    - **page**: 页码
+    - **size**: 每页大小（默认50）
+    """
+    try:
+        from datetime import datetime, time
+        from app.utils.timezone import now_cn
+        
+        # 获取今天的开始和结束时间（使用中国时区）
+        today = now_cn().date()
+        today_start = datetime.combine(today, time.min)
+        today_end = datetime.combine(today, time.max)
+        
+        # 构建查询 - 筛选今天创建的话题
+        query = select(Topic).where(
+            Topic.first_seen >= today_start,
+            Topic.first_seen <= today_end
+        )
+        
+        # 排序
+        if order == "echo_rank":
+            # 新的排序逻辑：先按回声长度（小时）降序，相同时按归一化热度降序
+            length_seconds = func.extract('epoch', Topic.last_active - Topic.first_seen)
+            length_hours = length_seconds / 3600.0
+            
+            query = query.order_by(
+                desc(length_hours),
+                desc(func.coalesce(Topic.current_heat_normalized, 0))
+            )
+        elif order == "last_active_desc":
+            query = query.order_by(desc(Topic.last_active))
+        elif order == "heat_desc":
+            query = query.order_by(desc(Topic.current_heat_normalized))
+        elif order == "intensity_desc":
+            query = query.order_by(desc(Topic.intensity_total))
+        else:
+            # 默认使用新的排序逻辑
+            length_seconds = func.extract('epoch', Topic.last_active - Topic.first_seen)
+            length_hours = length_seconds / 3600.0
+            query = query.order_by(
+                desc(length_hours),
+                desc(func.coalesce(Topic.current_heat_normalized, 0))
+            )
+        
+        # 获取总数
+        count_query = select(func.count()).select_from(query.subquery())
+        result = await db.execute(count_query)
+        total = result.scalar()
+        
+        # 分页
+        query = query.offset((page - 1) * size).limit(size)
+        result = await db.execute(query)
+        topics = result.scalars().all()
+        
+        # 转换为响应模型（适配前端格式）
+        items = []
+        for topic in topics:
+            # 计算回声时长（小时数）
+            length_hours = (topic.last_active - topic.first_seen).total_seconds() / 3600 if topic.last_active and topic.first_seen else 0
+            
+            # 获取平台分布（从TopicNodes查询）
+            nodes_query = select(SourceItem.platform, func.count(SourceItem.id)).select_from(TopicNode).join(
+                SourceItem, TopicNode.source_item_id == SourceItem.id
+            ).where(TopicNode.topic_id == topic.id).group_by(SourceItem.platform)
+            nodes_result = await db.execute(nodes_query)
+            platform_mentions = dict(nodes_result.all())
+            platforms = list(platform_mentions.keys())
+            
+            # 计算归一化热度（保持0-1范围，前端负责转换为百分比）
+            heat_normalized = topic.current_heat_normalized or 0
+            
+            items.append({
+                "topic_id": str(topic.id),
+                "title": topic.title_key,
+                "summary": topic.title_key,
+                "intensity_raw": topic.intensity_total,
+                "intensity_norm": round(heat_normalized, 4) if heat_normalized > 0 else 0,
+                "length_hours": round(length_hours, 1),
+                "length_days": round(length_hours / 24, 2),
                 "first_seen": topic.first_seen.isoformat() if topic.first_seen else None,
                 "last_active": topic.last_active.isoformat() if topic.last_active else None,
                 "platforms": platforms,

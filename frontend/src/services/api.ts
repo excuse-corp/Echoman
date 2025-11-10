@@ -268,6 +268,25 @@ export async function getHotspots(): Promise<{ items: HotspotSummary[]; fallback
   }
 }
 
+export async function getTodayTopics(): Promise<{ items: HotspotSummary[]; fallback: boolean }> {
+  try {
+    // 后端API路径: GET /api/v1/topics/today
+    console.log('[api] Fetching today topics from:', `${API_BASE_URL}/topics/today`);
+    const response = await fetch(`${API_BASE_URL}/topics/today`);
+    console.log('[api] Response status:', response.status);
+    if (!response.ok) {
+      throw new Error(`Bad status: ${response.status}`);
+    }
+    const payload = await response.json();
+    console.log('[api] Received today topics payload:', payload);
+    console.log('[api] Today topics count:', payload.items?.length);
+    return { items: payload.items as HotspotSummary[], fallback: false };
+  } catch (error) {
+    console.error("[api] getTodayTopics fallback, reason:", error);
+    return { items: [], fallback: true };
+  }
+}
+
 export async function getCategoryEchoStats(): Promise<{ items: CategoryEchoStat[]; fallback: boolean }> {
   try {
     // 后端API路径: GET /api/v1/categories/metrics/summary

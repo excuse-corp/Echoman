@@ -626,6 +626,37 @@ button {
   color: var(--text-muted);
 }
 
+.tab-header {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.tab-button {
+  flex: 1;
+  padding: 10px 16px;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.tab-button:hover {
+  background: var(--list-item-hover-bg);
+  border-color: var(--border-strong);
+}
+
+.tab-button.active {
+  background: var(--bg-accent);
+  border-color: var(--border-strong);
+  color: var(--text-strong);
+  font-weight: 600;
+}
+
 .fallback-tag {
   margin-top: 12px;
   display: inline-flex;

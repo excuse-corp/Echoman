@@ -1,7 +1,7 @@
 ﻿import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import type { HotspotSummary, TimelineNode, TopicDetail } from "../types";
-import { dataSources, getHotspots, getTimeline, getTopicDetail } from "../services/api";
+import { dataSources, getHotspots, getTodayTopics, getTimeline, getTopicDetail } from "../services/api";
 import { ConversationConsole } from "../components/ConversationConsole";
 import { ThemeToggle } from "../components/ThemeToggle";
 import { getPlatformLabel } from "../constants/platforms";
@@ -71,6 +71,7 @@ function formatEchoLength(hours: number): string {
 
 export function ExplorerPage() {
   const [hotspots, setHotspots] = useState<HotspotSummary[]>([]);
+  const [todayTopics, setTodayTopics] = useState<HotspotSummary[]>([]);
   const [selectedTopicId, setSelectedTopicId] = useState<string | null>(null);
   const [detail, setDetail] = useState<TopicDetail | null>(null);
   const [timeline, setTimeline] = useState<TimelineNode[]>([]);
@@ -79,6 +80,7 @@ export function ExplorerPage() {
   const [detailFallback, setDetailFallback] = useState(false);
   const [timelineLoading, setTimelineLoading] = useState(false);
   const [mode, setMode] = useState<"free" | "event">("event");
+  const [activeTab, setActiveTab] = useState<"echo" | "today">("echo");
 
   useEffect(() => {
     let cancel = false;
@@ -101,6 +103,29 @@ export function ExplorerPage() {
       
       setHotspots(sortedItems);
       setUsingFallback(fallback);
+    });
+    return () => {
+      cancel = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    let cancel = false;
+    getTodayTopics().then(({ items, fallback }) => {
+      if (cancel) return;
+      // 排序规则：与回声热榜一致
+      const sortedItems = [...items].sort((a, b) => {
+        const aHours = Math.floor(a.length_hours);
+        const bHours = Math.floor(b.length_hours);
+        
+        if (aHours !== bHours) {
+          return bHours - aHours;
+        }
+        
+        return b.intensity_norm - a.intensity_norm;
+      });
+      
+      setTodayTopics(sortedItems);
     });
     return () => {
       cancel = true;
@@ -156,14 +181,19 @@ export function ExplorerPage() {
   }, [selectedTopicId]);
 
   const selectedHotspot = useMemo(
-    () => hotspots.find((item) => item.topic_id === selectedTopicId) ?? null,
-    [hotspots, selectedTopicId],
+    () => {
+      const allItems = activeTab === "echo" ? hotspots : todayTopics;
+      return allItems.find((item) => item.topic_id === selectedTopicId) ?? null;
+    },
+    [hotspots, todayTopics, selectedTopicId, activeTab],
   );
 
   const handleHotspotClick = (topicId: string) => {
     setSelectedTopicId(topicId);
     setMode("event");
   };
+
+  const currentItems = activeTab === "echo" ? hotspots : todayTopics;
 
   return (
     <div className="page explorer">
@@ -192,12 +222,31 @@ export function ExplorerPage() {
       <main className="explorer-layout">
         <aside className="hotspot-sidebar">
           <div className="sidebar-header">
-            <h2>回声热榜</h2>
-            <span>取全部事件中回声长度前50展示，每天凌晨更新</span>
+            <div className="tab-header">
+              <button
+                type="button"
+                className={activeTab === "echo" ? "tab-button active" : "tab-button"}
+                onClick={() => setActiveTab("echo")}
+              >
+                回声热榜
+              </button>
+              <button
+                type="button"
+                className={activeTab === "today" ? "tab-button active" : "tab-button"}
+                onClick={() => setActiveTab("today")}
+              >
+                当日热点
+              </button>
+            </div>
+            <span>
+              {activeTab === "echo"
+                ? "取全部事件中回声长度前50展示，每天凌晨更新"
+                : "展示当日新增话题，按回声长度排序"}
+            </span>
           </div>
           <div className="hotspot-list-container">
             <ol className="hotspot-list">
-              {hotspots.map((item, index) => {
+              {currentItems.map((item, index) => {
                 const active = mode === "event" && item.topic_id === selectedTopicId;
                 return (
                   <li key={item.topic_id} className={active ? "hotspot-item active" : "hotspot-item"}>
