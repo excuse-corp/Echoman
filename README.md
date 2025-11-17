@@ -42,7 +42,7 @@ python backend.py
 - 启动 PostgreSQL 和 Redis（使用 Docker）
 - 安装 Python 依赖
 - 初始化数据库表结构
-- 启动 FastAPI 服务器（端口 8000）
+- 启动 FastAPI 服务器（端口 8778）
 
 #### 2. 启动前端
 
@@ -58,8 +58,7 @@ python frontend.py
 ### 访问应用
 
 - **前端界面**: http://localhost:5173
-- **后端 API**: http://localhost:8000/docs
-- **健康检查**: http://localhost:8000/health
+- **后端 API**: http://localhost:8778/docs
 
 ## 📚 文档导航
 
@@ -142,22 +141,22 @@ python frontend.py
 Echoman/
 ├── backend.py              # 后端启动脚本 ✨
 ├── frontend.py             # 前端启动脚本 ✨
-├── HOW_TO_START.md        # 启动指南 ✨
-├── backend/               # 后端代码
-│   ├── app/              # FastAPI 应用
-│   │   ├── api/         # API 路由
-│   │   ├── models/      # 数据库模型
-│   │   ├── services/    # 业务逻辑
-│   │   ├── tasks/       # Celery 任务
-│   │   ├── schemas/     # Pydantic 模型
-│   │   ├── config/      # 配置管理
-│   │   └── main.py      # 应用入口
-│   ├── scrapers/        # 爬虫模块
-│   ├── scripts/         # 工具脚本
-│   ├── requirements.txt # Python 依赖
+├── HOW_TO_START.md         # 启动指南 ✨
+├── backend/                # 后端代码
+│   ├── app/                # FastAPI 应用
+│   │   ├── api/            # API 路由
+│   │   ├── models/         # 数据库模型
+│   │   ├── services/       # 业务逻辑
+│   │   ├── tasks/          # Celery 任务
+│   │   ├── schemas/        # Pydantic 模型
+│   │   ├── config/         # 配置管理
+│   │   └── main.py         # 应用入口
+│   ├── scrapers/           # 爬虫模块
+│   ├── scripts/            # 工具脚本
+│   ├── requirements.txt    # Python 依赖
 │   └── docker-compose.yml
-├── frontend/            # 前端代码
-└── docs/               # 文档
+├── frontend/               # 前端代码
+└── docs/                   # 文档
     ├── api-spec.md           # API 规范
     └── backend-solution.md   # 方案设计
 ```

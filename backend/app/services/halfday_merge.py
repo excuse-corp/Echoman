@@ -43,10 +43,11 @@ import numpy as np
 from sklearn.metrics.pairwise import cosine_similarity
 
 from app.config import settings
-from app.models import SourceItem, Embedding, LLMJudgement
+from app.models import SourceItem, Embedding, LLMJudgement, RunPipeline
 from app.services.llm import get_llm_provider, get_embedding_provider
 from app.services.vector_service import get_vector_service
 from app.utils.token_manager import get_token_manager
+from app.utils.timezone import now_cn
 
 logger = logging.getLogger(__name__)
 
@@ -92,14 +93,41 @@ class EventMergeService:
         """
         print(f"🔄 开始新事件归并: {period}")
         
-        # 1. 获取待归并的数据
-        items = await self._get_pending_items(period)
+        # 创建运行记录
+        run_id = f"event_merge_{uuid.uuid4().hex[:12]}"
+        started_at = now_cn()
+        run_record = RunPipeline(
+            run_id=run_id,
+            stage="event_merge",
+            status="running",
+            started_at=started_at
+        )
+        self.db.add(run_record)
+        await self.db.commit()
         
-        if not items:
-            return {
-                "status": "no_data",
-                "period": period,
-                "input_items": 0
+        try:
+            # 1. 获取待归并的数据
+            items = await self._get_pending_items(period)
+            
+            if not items:
+                # 更新运行记录
+                run_record.status = "success"
+                run_record.ended_at = now_cn()
+                run_record.duration_ms = int((run_record.ended_at - started_at).total_seconds() * 1000)
+                run_record.input_count = 0
+                run_record.output_count = 0
+                run_record.success_count = 0
+                run_record.results = {
+                    "status": "no_data",
+                    "period": period,
+                    "input_items": 0
+                }
+                await self.db.commit()
+                
+                return {
+                    "status": "no_data",
+                    "period": period,
+                    "input_items": 0
             }
         
         print(f"📊 待归并数据: {len(items)} 条")
@@ -129,23 +157,45 @@ class EventMergeService:
         
         print(f"✅ 保留 {len(kept_items)} 条，丢弃 {len(dropped_items)} 条")
         
-        # 6. 热度聚合
-        await self._aggregate_heat(merge_groups)
-        
-        # 7. 返回结果
-        return {
-            "status": "success",
-            "period": period,
-            "input_items": len(items),
-            "kept_items": len(kept_items),
-            "dropped_items": len(dropped_items),
-            "keep_rate": len(kept_items) / len(items) if items else 0,
-            "drop_rate": len(dropped_items) / len(items) if items else 0,
-            "merge_groups": len(merge_groups),
-            "avg_occurrence": sum(
-                len(group["items"]) for group in merge_groups
-            ) / len(merge_groups) if merge_groups else 0
-        }
+            # 6. 热度聚合
+            await self._aggregate_heat(merge_groups)
+            
+            # 7. 准备返回结果
+            result = {
+                "status": "success",
+                "period": period,
+                "input_items": len(items),
+                "kept_items": len(kept_items),
+                "dropped_items": len(dropped_items),
+                "keep_rate": len(kept_items) / len(items) if items else 0,
+                "drop_rate": len(dropped_items) / len(items) if items else 0,
+                "merge_groups": len(merge_groups),
+                "avg_occurrence": sum(
+                    len(group["items"]) for group in merge_groups
+                ) / len(merge_groups) if merge_groups else 0
+            }
+            
+            # 更新运行记录
+            run_record.status = "success"
+            run_record.ended_at = now_cn()
+            run_record.duration_ms = int((run_record.ended_at - started_at).total_seconds() * 1000)
+            run_record.input_count = len(items)
+            run_record.output_count = len(kept_items)
+            run_record.success_count = len(kept_items)
+            run_record.failed_count = len(dropped_items)
+            run_record.results = result
+            await self.db.commit()
+            
+            return result
+            
+        except Exception as e:
+            # 更新运行记录为失败状态
+            run_record.status = "failed"
+            run_record.ended_at = now_cn()
+            run_record.duration_ms = int((run_record.ended_at - started_at).total_seconds() * 1000)
+            run_record.error_summary = str(e)
+            await self.db.commit()
+            raise
     
     async def _get_pending_items(self, period: str) -> List[SourceItem]:
         """获取待归并的数据"""

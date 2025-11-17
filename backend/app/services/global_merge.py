@@ -54,7 +54,7 @@ import numpy as np
 from app.config import settings
 from app.models import (
     SourceItem, Topic, TopicNode, TopicPeriodHeat, 
-    Embedding, LLMJudgement
+    Embedding, LLMJudgement, RunPipeline
 )
 from app.services.llm import get_llm_provider, get_embedding_provider
 from app.services.classification_service import ClassificationService
@@ -132,15 +132,41 @@ class GlobalMergeService:
         print(f"🌍 开始整体归并（阶段二）: {period}")
         start_time = now_cn()
         
-        # 1. 获取半日归并后保留的事件
-        merge_groups = await self._get_pending_merge_groups(period)
+        # 创建运行记录
+        run_id = f"global_merge_{uuid.uuid4().hex[:12]}"
+        run_record = RunPipeline(
+            run_id=run_id,
+            stage="global_merge",
+            status="running",
+            started_at=start_time
+        )
+        self.db.add(run_record)
+        await self.db.commit()
         
-        if not merge_groups:
-            return {
-                "status": "no_data",
-                "period": period,
-                "input_events": 0
-            }
+        try:
+            # 1. 获取半日归并后保留的事件
+            merge_groups = await self._get_pending_merge_groups(period)
+            
+            if not merge_groups:
+                # 更新运行记录
+                run_record.status = "success"
+                run_record.ended_at = now_cn()
+                run_record.duration_ms = int((run_record.ended_at - start_time).total_seconds() * 1000)
+                run_record.input_count = 0
+                run_record.output_count = 0
+                run_record.success_count = 0
+                run_record.results = {
+                    "status": "no_data",
+                    "period": period,
+                    "input_events": 0
+                }
+                await self.db.commit()
+                
+                return {
+                    "status": "no_data",
+                    "period": period,
+                    "input_events": 0
+                }
         
         total_groups = len(merge_groups)
         print(f"📊 待归并事件组: {total_groups} 个")
@@ -216,15 +242,34 @@ class GlobalMergeService:
             "avg_seconds_per_group": duration_seconds / len(merge_groups) if merge_groups else 0
         }
         
-        # 触发前端数据更新
-        try:
-            from app.services.frontend_update_service import update_frontend_after_merge
-            await update_frontend_after_merge(self.db, period, merge_stats)
+            # 触发前端数据更新
+            try:
+                from app.services.frontend_update_service import update_frontend_after_merge
+                await update_frontend_after_merge(self.db, period, merge_stats)
+            except Exception as e:
+                print(f"  ⚠️  前端数据更新失败（不影响归并）: {e}")
+            
+            # 更新运行记录
+            run_record.status = "success"
+            run_record.ended_at = end_time
+            run_record.duration_ms = int(duration_seconds * 1000)
+            run_record.input_count = total_groups
+            run_record.output_count = merge_count + new_count
+            run_record.success_count = merge_count + new_count
+            run_record.results = merge_stats
+            await self.db.commit()
+            
+            # 5. 返回结果（包含性能监控）
+            return merge_stats
+            
         except Exception as e:
-            print(f"  ⚠️  前端数据更新失败（不影响归并）: {e}")
-        
-        # 5. 返回结果（包含性能监控）
-        return merge_stats
+            # 更新运行记录为失败状态
+            run_record.status = "failed"
+            run_record.ended_at = now_cn()
+            run_record.duration_ms = int((run_record.ended_at - start_time).total_seconds() * 1000)
+            run_record.error_summary = str(e)
+            await self.db.commit()
+            raise
     
     async def _get_pending_merge_groups(self, period: str) -> List[Dict[str, Any]]:
         """获取待整体归并的事件组"""
