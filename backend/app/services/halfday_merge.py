@@ -108,9 +108,7 @@ class EventMergeService:
         try:
             # 1. 获取待归并的数据
             items = await self._get_pending_items(period)
-            
             if not items:
-                # 更新运行记录
                 run_record.status = "success"
                 run_record.ended_at = now_cn()
                 run_record.duration_ms = int((run_record.ended_at - started_at).total_seconds() * 1000)
@@ -123,40 +121,36 @@ class EventMergeService:
                     "input_items": 0
                 }
                 await self.db.commit()
-                
                 return {
                     "status": "no_data",
                     "period": period,
                     "input_items": 0
-            }
-        
-        print(f"📊 待归并数据: {len(items)} 条")
-        
-        # 2. 向量化
-        print("🔤 开始向量化...")
-        await self._vectorize_items(items)
-        
-        # 3. 向量聚类
-        print("🔗 开始向量聚类...")
-        candidate_groups = await self._vector_clustering(items)
-        
-        print(f"📦 初步聚类: {len(candidate_groups)} 个候选组")
-        
-        # 4. LLM 精确判定
-        print("🤖 开始 LLM 判定...")
-        merge_groups = await self._llm_judge_merge(candidate_groups, period)
-        
-        print(f"✅ LLM 判定完成: {len(merge_groups)} 个归并组")
-        
-        # 5. 出现次数统计与筛选
-        print("🔍 统计出现次数并筛选...")
-        kept_items, dropped_items = await self._filter_by_occurrence(
-            merge_groups,
-            min_occurrence=settings.halfday_merge_min_occurrence
-        )
-        
-        print(f"✅ 保留 {len(kept_items)} 条，丢弃 {len(dropped_items)} 条")
-        
+                }
+            
+            print(f"📊 待归并数据: {len(items)} 条")
+            
+            # 2. 向量化
+            print("🔤 开始向量化...")
+            await self._vectorize_items(items)
+            
+            # 3. 向量聚类
+            print("🔗 开始向量聚类...")
+            candidate_groups = await self._vector_clustering(items)
+            print(f"📦 初步聚类: {len(candidate_groups)} 个候选组")
+            
+            # 4. LLM 精确判定
+            print("🤖 开始 LLM 判定...")
+            merge_groups = await self._llm_judge_merge(candidate_groups, period)
+            print(f"✅ LLM 判定完成: {len(merge_groups)} 个归并组")
+            
+            # 5. 出现次数统计与筛选
+            print("🔍 统计出现次数并筛选...")
+            kept_items, dropped_items = await self._filter_by_occurrence(
+                merge_groups,
+                min_occurrence=settings.halfday_merge_min_occurrence
+            )
+            print(f"✅ 保留 {len(kept_items)} 条，丢弃 {len(dropped_items)} 条")
+            
             # 6. 热度聚合
             await self._aggregate_heat(merge_groups)
             
@@ -171,7 +165,7 @@ class EventMergeService:
                 "drop_rate": len(dropped_items) / len(items) if items else 0,
                 "merge_groups": len(merge_groups),
                 "avg_occurrence": sum(
-                    len(group["items"]) for group in merge_groups
+                    len(group['items']) for group in merge_groups
                 ) / len(merge_groups) if merge_groups else 0
             }
             
@@ -185,9 +179,8 @@ class EventMergeService:
             run_record.failed_count = len(dropped_items)
             run_record.results = result
             await self.db.commit()
-            
             return result
-            
+        
         except Exception as e:
             # 更新运行记录为失败状态
             run_record.status = "failed"
@@ -586,4 +579,3 @@ class EventMergeService:
             else:
                 group["avg_heat"] = 0.0
                 group["max_heat"] = 0.0
-

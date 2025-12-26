@@ -122,16 +122,9 @@ class GlobalMergeService:
         性能优化：
         - 批量处理：每次最多处理 MAX_BATCH_SIZE 个新事件组
         - 资源监控：记录耗时和处理数量
-        
-        Args:
-            period: 半日时段标识（如 "2025-10-29_AM" 或 "2025-10-29_PM"）
-            
-        Returns:
-            归并结果统计
         """
         print(f"🌍 开始整体归并（阶段二）: {period}")
         start_time = now_cn()
-        
         # 创建运行记录
         run_id = f"global_merge_{uuid.uuid4().hex[:12]}"
         run_record = RunPipeline(
@@ -142,13 +135,10 @@ class GlobalMergeService:
         )
         self.db.add(run_record)
         await self.db.commit()
-        
         try:
             # 1. 获取半日归并后保留的事件
             merge_groups = await self._get_pending_merge_groups(period)
-            
             if not merge_groups:
-                # 更新运行记录
                 run_record.status = "success"
                 run_record.ended_at = now_cn()
                 run_record.duration_ms = int((run_record.ended_at - start_time).total_seconds() * 1000)
@@ -161,95 +151,66 @@ class GlobalMergeService:
                     "input_events": 0
                 }
                 await self.db.commit()
-                
                 return {
                     "status": "no_data",
                     "period": period,
                     "input_events": 0
                 }
-        
-        total_groups = len(merge_groups)
-        print(f"📊 待归并事件组: {total_groups} 个")
-        
-        # 【性能优化】批量处理限制
-        if total_groups > self.MAX_BATCH_SIZE:
-            print(
-                f"⚠️  事件组数量({total_groups})超过批量处理限制({self.MAX_BATCH_SIZE})，"
-                f"将只处理前 {self.MAX_BATCH_SIZE} 个"
-            )
-            merge_groups = merge_groups[:self.MAX_BATCH_SIZE]
-        
-        # 2. 【性能优化】并行处理事件组
-        merge_count = 0
-        new_count = 0
-        new_topics = []  # 收集新创建的topics，用于批量生成摘要
-        
-        # 并发批处理配置
-        # FIXME: 暂时禁用并发处理，避免SQLAlchemy会话冲突（详见GLOBAL_MERGE_BUG_REPORT.md）
-        CONCURRENT_BATCH_SIZE = 1  # 串行处理，避免greenlet_spawn错误
-        
-        print(f"🚀 开始处理（每批{CONCURRENT_BATCH_SIZE}个）...")
-        
-        for i in range(0, len(merge_groups), CONCURRENT_BATCH_SIZE):
-            batch = merge_groups[i:i + CONCURRENT_BATCH_SIZE]
-            batch_start = now_cn()
-            
-            # 并行处理当前批次
-            results = await asyncio.gather(
-                *[self._process_event_group(group, period) for group in batch],
-                return_exceptions=True
-            )
-            
-            # 统计结果
-            for idx, result in enumerate(results):
-                if isinstance(result, Exception):
-                    print(f"  ❌ Group {i + idx} 处理失败: {result}")
-                    continue
-                
-                if result.get("action") == "merge":
-                    merge_count += 1
-                elif result.get("action") == "new":
-                    new_count += 1
-                    # 收集新创建的topic
-                    if "topic" in result:
-                        new_topics.append(result["topic"])
-            
-            batch_duration = (now_cn() - batch_start).total_seconds()
-            print(f"  ✅ 批次 {i//CONCURRENT_BATCH_SIZE + 1}/{(len(merge_groups)-1)//CONCURRENT_BATCH_SIZE + 1} 完成 "
-                  f"({len(batch)}个group, 耗时{batch_duration:.2f}秒)")
-        
-        # 3. 【性能优化】批量异步生成摘要
-        if new_topics:
-            print(f"\n📝 开始批量生成摘要（{len(new_topics)}个新Topic）...")
-            await self._batch_generate_summaries(new_topics)
-        
-        # 计算耗时
-        end_time = now_cn()
-        duration_seconds = (end_time - start_time).total_seconds()
-        
-        print(f"✅ 归并完成: merge={merge_count}, new={new_count}, 耗时={duration_seconds:.2f}秒")
-        
-        # 4. 更新前端数据
-        merge_stats = {
-            "status": "success",
-            "period": period,
-            "total_groups": total_groups,
-            "processed_groups": len(merge_groups),
-            "merge_count": merge_count,
-            "new_count": new_count,
-            "merge_rate": merge_count / len(merge_groups) if merge_groups else 0,
-            "duration_seconds": duration_seconds,
-            "avg_seconds_per_group": duration_seconds / len(merge_groups) if merge_groups else 0
-        }
-        
-            # 触发前端数据更新
+            total_groups = len(merge_groups)
+            print(f"📊 待归并事件组: {total_groups} 个")
+            if total_groups > self.MAX_BATCH_SIZE:
+                print(
+                    f"⚠️  事件组数量({total_groups})超过批量处理限制({self.MAX_BATCH_SIZE})，"
+                    f"将只处理前 {self.MAX_BATCH_SIZE} 个"
+                )
+                merge_groups = merge_groups[:self.MAX_BATCH_SIZE]
+            merge_count = 0
+            new_count = 0
+            new_topics = []
+            CONCURRENT_BATCH_SIZE = 1  # 串行，避免会话冲突
+            print(f"🚀 开始处理（每批{CONCURRENT_BATCH_SIZE}个）...")
+            for i in range(0, len(merge_groups), CONCURRENT_BATCH_SIZE):
+                batch = merge_groups[i:i + CONCURRENT_BATCH_SIZE]
+                batch_start = now_cn()
+                results = await asyncio.gather(
+                    *[self._process_event_group(group, period) for group in batch],
+                    return_exceptions=True
+                )
+                for idx, result in enumerate(results):
+                    if isinstance(result, Exception):
+                        print(f"  ❌ Group {i + idx} 处理失败: {result}")
+                        continue
+                    if result.get("action") == "merge":
+                        merge_count += 1
+                    elif result.get("action") == "new":
+                        new_count += 1
+                        if "topic" in result:
+                            new_topics.append(result["topic"])
+                batch_duration = (now_cn() - batch_start).total_seconds()
+                print(f"  ✅ 批次 {i//CONCURRENT_BATCH_SIZE + 1}/{(len(merge_groups)-1)//CONCURRENT_BATCH_SIZE + 1} 完成 "
+                      f"({len(batch)}个group, 耗时{batch_duration:.2f}秒)")
+            if new_topics:
+                print(f"\\n📝 开始批量生成摘要（{len(new_topics)}个新Topic）...")
+                await self._batch_generate_summaries(new_topics)
+            end_time = now_cn()
+            duration_seconds = (end_time - start_time).total_seconds()
+            print(f"✅ 归并完成: merge={merge_count}, new={new_count}, 耗时={duration_seconds:.2f}秒")
+            merge_stats = {
+                "status": "success",
+                "period": period,
+                "total_groups": total_groups,
+                "processed_groups": len(merge_groups),
+                "merge_count": merge_count,
+                "new_count": new_count,
+                "merge_rate": merge_count / len(merge_groups) if merge_groups else 0,
+                "duration_seconds": duration_seconds,
+                "avg_seconds_per_group": duration_seconds / len(merge_groups) if merge_groups else 0
+            }
             try:
                 from app.services.frontend_update_service import update_frontend_after_merge
                 await update_frontend_after_merge(self.db, period, merge_stats)
             except Exception as e:
                 print(f"  ⚠️  前端数据更新失败（不影响归并）: {e}")
-            
-            # 更新运行记录
             run_record.status = "success"
             run_record.ended_at = end_time
             run_record.duration_ms = int(duration_seconds * 1000)
@@ -258,19 +219,14 @@ class GlobalMergeService:
             run_record.success_count = merge_count + new_count
             run_record.results = merge_stats
             await self.db.commit()
-            
-            # 5. 返回结果（包含性能监控）
             return merge_stats
-            
         except Exception as e:
-            # 更新运行记录为失败状态
             run_record.status = "failed"
             run_record.ended_at = now_cn()
             run_record.duration_ms = int((run_record.ended_at - start_time).total_seconds() * 1000)
             run_record.error_summary = str(e)
             await self.db.commit()
             raise
-    
     async def _get_pending_merge_groups(self, period: str) -> List[Dict[str, Any]]:
         """获取待整体归并的事件组"""
         stmt = select(SourceItem).where(
@@ -967,4 +923,3 @@ class GlobalMergeService:
             logger.error(f"完整堆栈:\n{traceback.format_exc()}")
             print(f"  ❌ 摘要生成失败 (Topic {topic_id}): {e}")
             return False
-
