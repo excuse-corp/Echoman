@@ -54,7 +54,7 @@ import numpy as np
 from app.config import settings
 from app.models import (
     SourceItem, Topic, TopicNode, TopicPeriodHeat, 
-    Embedding, LLMJudgement, RunPipeline
+    LLMJudgement, RunPipeline, Summary
 )
 from app.services.llm import get_llm_provider, get_embedding_provider
 from app.services.classification_service import ClassificationService
@@ -112,6 +112,33 @@ class GlobalMergeService:
         self.max_prompt_tokens = 2500  # 输入上下文最大 token
         self.max_completion_tokens = 300  # 判定结果最大 token
         self.max_candidate_summary_tokens = 200  # 每个候选主题摘要最大 token
+    
+    async def _ensure_summary_vector(self, topic: Topic, representative: SourceItem):
+        """
+        确保 Topic 具备可检索的摘要向量
+        - 若已有摘要但无向量，则重写向量
+        - 若无摘要，则创建占位摘要（用标题+摘要），并写向量
+        """
+        vector_service = get_vector_service()
+        try:
+            # 已有摘要，检查向量
+            if topic.summary_id:
+                vec = vector_service.get_embedding("topic_summary", int(topic.summary_id))
+                if vec is not None:
+                    return
+                # 重写向量
+                stmt = select(Summary).where(Summary.id == topic.summary_id)
+                result = await self.db.execute(stmt)
+                summary = result.scalar_one_or_none()
+                if summary:
+                    await self.summary_service._generate_summary_embedding(self.db, summary)  # type: ignore
+                    return
+            
+            # 没有摘要，创建占位摘要（带向量）
+            await self.summary_service._create_placeholder_summary(self.db, topic)  # type: ignore
+            
+        except Exception as e:
+            logger.warning(f\"确保摘要向量失败 (Topic {topic.id}): {e}\")
     
     async def run_global_merge(self, period: str) -> Dict[str, Any]:
         """
@@ -344,32 +371,27 @@ class GlobalMergeService:
         # 确保不超过3个候选（性能优化+成本控制）
         top_k = min(top_k, 3)
         
-        # 计算7天前的时间（只检索最近一周的topic）
+        # 计算时间窗口（默认半年内）
         from datetime import timedelta
-        one_week_ago = now_cn() - timedelta(days=7)
+        active_since = now_cn() - timedelta(days=180)
         
-        # 获取 item 的向量
-        stmt = select(Embedding).where(
-            and_(
-                Embedding.object_type == "source_item",
-                Embedding.object_id == item.id
-            )
-        )
-        result = await self.db.execute(stmt)
-        item_embedding = result.scalar_one_or_none()
-        
-        if not item_embedding:
+        # 获取 item 的向量（Chroma）
+        vector_service = get_vector_service()
+        item_vector = vector_service.get_embedding("source_item", int(item.id))
+        if item_vector is None or len(item_vector) == 0:
             return []
+        # 确保使用 Python list，避免 numpy array 布尔判断歧义
+        if not isinstance(item_vector, list):
+            item_vector = list(item_vector)
         
         # 尝试使用Chroma进行向量搜索
-        vector_service = get_vector_service()
         candidates = []
         
         if vector_service.db_type == "chroma":
             try:
                 # 【优化】直接搜索topic_summary向量，而非source_item向量
                 ids, distances, metadatas = vector_service.search_similar(
-                    query_embedding=item_embedding.vector,
+                    query_embedding=item_vector,
                     top_k=top_k * 2,  # 多召回一些，然后时间过滤
                     where={"object_type": "topic_summary"}  # 搜索Summary向量
                 )
@@ -393,7 +415,7 @@ class GlobalMergeService:
                             and_(
                                 Topic.id == topic_id,
                                 Topic.status == "active",
-                                Topic.last_active >= one_week_ago  # 时间过滤
+                                Topic.last_active >= active_since  # 时间过滤
                             )
                         )
                         result = await self.db.execute(stmt)
@@ -423,7 +445,7 @@ class GlobalMergeService:
         stmt = select(Topic).where(
             and_(
                 Topic.status == "active",
-                Topic.last_active >= one_week_ago  # 只检索最近7天的topic
+                Topic.last_active >= active_since  # 半年内
             )
         ).order_by(
             Topic.last_active.desc()
@@ -683,6 +705,9 @@ class GlobalMergeService:
             await self.db.commit()
             
             print(f"  ✨ 创建新 Topic: {topic.id} - {topic.title_key} ({nodes_created} nodes)")
+
+            # 立即写占位摘要向量，避免同轮重复创建
+            await self._ensure_summary_vector(topic, representative)
             
             # 【性能优化】分类和摘要生成延迟到批量处理
             # 异步执行分类（不等待摘要生成）
@@ -768,6 +793,9 @@ class GlobalMergeService:
         await self.db.commit()
         
         print(f"  🔗 归并到 Topic: {topic.id} - {topic.title_key}")
+
+        # 若旧Topic缺摘要向量，立即补写占位摘要向量
+        await self._ensure_summary_vector(topic, items[0])
         
         # 异步执行增量摘要更新
         try:

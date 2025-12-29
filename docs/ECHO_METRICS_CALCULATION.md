@@ -89,7 +89,7 @@ function formatEchoLength(hours: number): string {
 
 回声强度表示事件在归并周期内的归一化热度值，反映事件相对于其他事件的热度水平。
 
-> 📖 **应用场景**：热度归一化在每次归并流程中执行（每日3次：12:15、18:15、22:15），详见 [merge-logic.md](merge-logic.md#步骤1热度归一化)
+> 📖 **应用场景**：热度归一化在每次归并流程中执行（每日3次：12:05、18:05、22:05，Asia/Shanghai），详见 [merge-logic.md](merge-logic.md#步骤1热度归一化)
 
 ### 2.2 计算流程
 
@@ -500,4 +500,3 @@ const sortedItems = [...items].sort((a, b) => {
 **文档版本**: v1.0  
 **最后更新**: 2025-11-06  
 **作者**: Echoman Team
-

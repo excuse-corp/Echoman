@@ -1,7 +1,9 @@
 # 今日头条热榜爬虫
 import time
 import random
-from typing import List, Dict, Any
+import json
+import re
+from typing import List, Dict, Any, Optional
 from .base import BaseScraper
 
 class ToutiaoScraper(BaseScraper):
@@ -88,8 +90,21 @@ class ToutiaoScraper(BaseScraper):
                     else:
                         response = self._make_request(api_url)
                     
-                    # 解析响应
-                    data = response.json()
+                    # 尝试宽松解码
+                    raw_text = response.content.decode(response.encoding or "utf-8", errors="ignore")
+                    data = None
+                    try:
+                        data = response.json()
+                    except Exception:
+                        try:
+                            data = json.loads(raw_text)
+                        except Exception as e:
+                            print(f"解析API响应失败: {e}")
+                            data = None
+                    
+                    # 官方接口若返回HTML，尝试从页面脚本中提取JSON
+                    if api_type == "official" and not isinstance(data, (dict, list)):
+                        data = self._parse_official_html(raw_text)
                     
                     # 根据不同API类型解析数据
                     hot_list = self._parse_api_response(data, api_type)
@@ -137,6 +152,35 @@ class ToutiaoScraper(BaseScraper):
             print(f"解析API响应失败: {e}")
         
         return []
+
+    def _parse_official_html(self, text: str) -> Optional[Dict[str, Any]]:
+        """
+        从今日头条官方页面的 HTML/JS 中提取 JSON 数据
+        尝试匹配 __SSR_HYDRATED_DATA__ = {...};
+        返回字典或列表
+        """
+        try:
+            m = re.search(r"__SSR_HYDRATED_DATA__\\s*=\\s*({.*?})\\s*;", text, re.S)
+            if not m:
+                return None
+            payload = json.loads(m.group(1))
+            # 递归查找包含热榜的列表字段
+            def dfs(obj):
+                if isinstance(obj, list):
+                    return obj
+                if isinstance(obj, dict):
+                    for k, v in obj.items():
+                        if k in ("hot_board", "hot_list", "data") and isinstance(v, list):
+                            return v
+                        found = dfs(v)
+                        if found:
+                            return found
+                return None
+            hot_list = dfs(payload)
+            return {"status": 0, "data": hot_list} if hot_list else None
+        except Exception as e:
+            print(f"解析官方HTML失败: {e}")
+            return None
     
     def _parse_hot_value(self, hot_value: Any) -> float:
         """

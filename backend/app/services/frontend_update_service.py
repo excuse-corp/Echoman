@@ -3,6 +3,7 @@
 
 在归并完成后，更新前端页面需要的数据和状态
 """
+import json
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import text
 from app.utils.timezone import now_cn
@@ -73,15 +74,17 @@ class FrontendUpdateService:
         try:
             await self.db.execute(text("""
                 INSERT INTO system_config (key, value, updated_at)
-                VALUES ('last_merge_time', :timestamp, :timestamp)
+                VALUES ('last_merge_time', :val, :ts)
                 ON CONFLICT (key) 
-                DO UPDATE SET value = :timestamp, updated_at = :timestamp
+                DO UPDATE SET value = :val, updated_at = :ts
             """), {
-                "timestamp": now_cn().isoformat()
+                "val": now_cn().isoformat(),
+                "ts": now_cn()
             })
         except Exception as e:
             # 如果system_config表不存在，忽略此步骤
             print(f"  ⚠️  无法更新系统配置表（可能不存在）: {e}")
+            await self.db.rollback()
     
     async def _refresh_topic_stats(self):
         """刷新 Topics 的聚合统计"""
@@ -105,6 +108,7 @@ class FrontendUpdateService:
             """))
         except Exception as e:
             print(f"  ⚠️  刷新Topic统计失败: {e}")
+            await self.db.rollback()
     
     async def _log_merge_completion(self, period: str, merge_stats: dict):
         """记录归并完成事件"""
@@ -114,24 +118,34 @@ class FrontendUpdateService:
         try:
             await self.db.execute(text("""
                 INSERT INTO runs_pipeline (
-                    run_id, stage, status, started_at, ended_at,
-                    input_count, output_count, metadata
+                    run_id, stage, status, started_at, ended_at, duration_ms,
+                    input_count, output_count, success_count, failed_count,
+                    results, metadata, created_at, updated_at
                 )
                 VALUES (
                     :run_id, 'merge_completed', 'success',
-                    :started_at, :ended_at,
-                    :input_count, :output_count, :metadata
+                    :started_at, :ended_at, :duration_ms,
+                    :input_count, :output_count, :success_count, :failed_count,
+                    CAST(:results AS jsonb), CAST(:metadata AS jsonb),
+                    :created_at, :updated_at
                 )
             """), {
                 "run_id": f"merge_{period}_{now_cn().strftime('%Y%m%d%H%M%S')}",
                 "started_at": now_cn(),
                 "ended_at": now_cn(),
+                "duration_ms": 0,
                 "input_count": merge_stats.get("processed_groups", 0),
                 "output_count": merge_stats.get("merge_count", 0) + merge_stats.get("new_count", 0),
-                "metadata": str(merge_stats)
+                "success_count": merge_stats.get("merge_count", 0) + merge_stats.get("new_count", 0),
+                "failed_count": 0,
+                "results": json.dumps(merge_stats, ensure_ascii=False),
+                "metadata": json.dumps(merge_stats, ensure_ascii=False),
+                "created_at": now_cn(),
+                "updated_at": now_cn()
             })
         except Exception as e:
             print(f"  ⚠️  记录归并完成事件失败: {e}")
+            await self.db.rollback()
 
     async def _refresh_category_metrics(self):
         """刷新分类聚合指标，供前端展示"""
@@ -158,4 +172,3 @@ async def update_frontend_after_merge(db: AsyncSession, period: str, merge_stats
     """
     service = FrontendUpdateService(db)
     await service.update_after_merge(period, merge_stats)
-

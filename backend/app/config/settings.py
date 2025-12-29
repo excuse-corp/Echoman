@@ -75,8 +75,8 @@ class Settings(BaseSettings):
     
     # ========== 归并配置 ==========
     halfday_merge_min_occurrence: int = Field(default=2, description="半日归并最小出现次数")
-    halfday_merge_vector_threshold: float = Field(default=0.85, description="半日归并向量相似度阈值")
-    halfday_merge_title_threshold: float = Field(default=0.6, description="半日归并标题Jaccard阈值")
+    halfday_merge_vector_threshold: float = Field(default=0.80, description="半日归并向量相似度阈值")
+    halfday_merge_title_threshold: float = Field(default=0.4, description="半日归并标题Jaccard阈值")
     global_merge_vector_threshold: float = Field(default=0.80, description="整体归并向量相似度阈值")
     global_merge_confidence_threshold: float = Field(default=0.75, description="整体归并LLM置信度阈值")
     global_merge_topk_candidates: int = Field(default=3, description="候选召回数量（最多3个）")
@@ -197,4 +197,3 @@ class Settings(BaseSettings):
 
 # 全局配置实例
 settings = Settings()
-

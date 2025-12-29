@@ -7,19 +7,20 @@
 - 核心功能：对新采集的数据去噪、验证真实热点
 
 【归并总体流程】
-每日执行3次完整归并（上午 12:15-12:30，下午 18:15-18:30，傍晚 22:15-22:30）：
+每日执行3次完整归并（上午 12:05-12:20，下午 18:05-18:20，傍晚 22:05-22:20）：
   ┌─────────────────────────────────────────────────────────────┐
-  │ 阶段一：新事件归并（本模块，12:15/18:15/22:15）             │
+  │ 阶段一：新事件归并（本模块，12:05/18:05/22:05）             │
   │ - 对新爬取数据去噪                                           │
   │ - 热度归一化（Min-Max + 平台权重）                          │
-  │ - 向量聚类（相似度 > 0.85）                                 │
+  │ - 标题归一化 + 2-gram Jaccard（> 0.4）                      │
+  │ - 向量聚类（相似度 > 0.80）                                 │
   │ - LLM判定（确认同组事件）                                   │
   │ - 出现次数筛选（≥2次保留，过滤单次噪音）                    │
   │ - 输出：pending_global_merge                                │
   └─────────────────────────────────────────────────────────────┘
                              ↓
   ┌─────────────────────────────────────────────────────────────┐
-  │ 阶段二：整体归并（global_merge.py，12:30/18:30/22:30）      │
+  │ 阶段二：整体归并（global_merge.py，12:20/18:20/22:20）      │
   │ - 与历史Topic库比对                                          │
   │ - 决策：归入已有主题 or 创建新主题                          │
   │ - 输出：更新Topics表 + 前端数据更新                         │
@@ -43,7 +44,8 @@ import numpy as np
 from sklearn.metrics.pairwise import cosine_similarity
 
 from app.config import settings
-from app.models import SourceItem, Embedding, LLMJudgement, RunPipeline
+from app.utils.text_normalize import normalize_title
+from app.models import SourceItem, LLMJudgement, RunPipeline
 from app.services.llm import get_llm_provider, get_embedding_provider
 from app.services.vector_service import get_vector_service
 from app.utils.token_manager import get_token_manager
@@ -76,6 +78,8 @@ class EventMergeService:
         self.llm_provider = get_llm_provider()
         self.embedding_provider = get_embedding_provider()
         self.token_manager = get_token_manager(model=settings.qwen_model)
+        # 本轮运行的向量缓存（key: source_item_<id>）
+        self.vector_cache: Dict[str, List[float]] = {}
         # Token 限制：归并任务上下文通常包含多个新闻条目
         self.max_prompt_tokens = 2000  # 输入上下文最大 token
         self.max_completion_tokens = 300  # 判定结果最大 token
@@ -92,6 +96,8 @@ class EventMergeService:
             归并结果统计
         """
         print(f"🔄 开始新事件归并: {period}")
+        # 清空缓存，避免跨批次污染
+        self.vector_cache.clear()
         
         # 创建运行记录
         run_id = f"event_merge_{uuid.uuid4().hex[:12]}"
@@ -202,81 +208,44 @@ class EventMergeService:
         return result.scalars().all()
     
     async def _vectorize_items(self, items: List[SourceItem]):
-        """向量化数据项"""
-        # 准备文本
-        texts = [
-            f"{item.title} {item.summary or ''}" 
-            for item in items
-        ]
-        
+        """向量化数据项（纯 Chroma 模式）"""
+        texts = [f"{normalize_title(item.title)} {item.summary or ''}" for item in items]
+
         try:
-            # 批量向量化
             vectors = await self.embedding_provider.embedding(texts)
-            
-            # 保存向量到PostgreSQL
-            embeddings_to_create = []
-            for item, vector in zip(items, vectors):
-                embedding = Embedding(
-                    object_type="source_item",
-                    object_id=item.id,
-                    provider=self.embedding_provider.get_provider_name(),
-                    model=self.embedding_provider.model,
-                    vector=vector
-                )
-                self.db.add(embedding)
-                embeddings_to_create.append((item, embedding))
-            
-            # 先提交以获取embedding的ID
-            await self.db.flush()
-            
-            # 更新 source_item 的 embedding_id
-            for item, embedding in embeddings_to_create:
-                item.embedding_id = embedding.id
-            
-            await self.db.commit()
-            
-            # 同步保存到Chroma向量数据库
-            try:
-                vector_service = get_vector_service()
-                if vector_service.db_type == "chroma":
-                    ids = [f"source_item_{item.id}" for item in items]
-                    metadatas = [
-                        {
-                            "object_type": "source_item",
-                            "object_id": int(item.id),
-                            "platform": item.platform,
-                            "title": item.title[:200]  # 限制长度
-                        }
-                        for item in items
-                    ]
-                    documents = [f"{item.title} {item.summary or ''}"[:500] for item in items]
-                    
-                    vector_service.add_embeddings(
-                        ids=ids,
-                        embeddings=vectors,
-                        metadatas=metadatas,
-                        documents=documents
-                    )
-                    print(f"✅ 已同步 {len(vectors)} 个向量到Chroma")
-            except Exception as chroma_error:
-                print(f"⚠️  Chroma同步失败（不影响主流程）: {chroma_error}")
-            
+
+            vector_service = get_vector_service()
+            if vector_service.db_type != "chroma":
+                raise RuntimeError("Chroma 未初始化，无法存储向量")
+
+            ids = [f"source_item_{item.id}" for item in items]
+            metadatas = [
+                {
+                    "object_type": "source_item",
+                    "object_id": int(item.id),
+                    "platform": item.platform,
+                    "title": item.title[:200]
+                }
+                for item in items
+            ]
+            documents = [f"{item.title} {item.summary or ''}"[:500] for item in items]
+
+            vector_service.add_embeddings(
+                ids=ids,
+                embeddings=vectors,
+                metadatas=metadatas,
+                documents=documents
+            )
+
+            for chroma_id, vec in zip(ids, vectors):
+                self.vector_cache[chroma_id] = vec
+            print(f"✅ 已写入 {len(vectors)} 个向量到 Chroma")
         except Exception as e:
             print(f"❌ 向量化失败: {e}")
-            # 失败时使用模拟向量
+            # 失败兜底：用随机向量缓存，允许后续流程继续
             for item in items:
-                # 使用随机向量代替（仅用于开发测试）
                 mock_vector = np.random.rand(settings.embedding_dimension).tolist()
-                embedding = Embedding(
-                    object_type="source_item",
-                    object_id=item.id,
-                    provider="mock",
-                    model="mock",
-                    vector=mock_vector
-                )
-                self.db.add(embedding)
-            
-            await self.db.commit()
+                self.vector_cache[f"source_item_{item.id}"] = mock_vector
     
     async def _vector_clustering(
         self,
@@ -288,20 +257,16 @@ class EventMergeService:
         Returns:
             候选归并组列表
         """
-        # 获取向量
+        # 获取向量（缓存优先，其次从 Chroma 读取）
+        vector_service = get_vector_service()
         item_vectors = []
         for item in items:
-            stmt = select(Embedding).where(
-                and_(
-                    Embedding.object_type == "source_item",
-                    Embedding.object_id == item.id
-                )
-            ).order_by(Embedding.created_at.desc()).limit(1)
-            result = await self.db.execute(stmt)
-            embedding = result.scalar_one_or_none()
-            
-            if embedding:
-                item_vectors.append((item, embedding.vector))
+            cache_key = f"source_item_{item.id}"
+            vec = self.vector_cache.get(cache_key)
+            if vec is None:
+                vec = vector_service.get_embedding("source_item", int(item.id))
+            if vec is not None:
+                item_vectors.append((item, vec))
         
         if not item_vectors:
             return []
@@ -326,11 +291,14 @@ class EventMergeService:
             for j, (item_j, _) in enumerate(item_vectors):
                 if j in used or j == i:
                     continue
-                
+
                 # 检查相似度
                 if similarity_matrix[i][j] >= threshold:
                     # 额外检查标题相似度
-                    title_sim = self._title_jaccard(item_i.title, item_j.title)
+                    title_sim = self._title_jaccard(
+                        normalize_title(item_i.title),
+                        normalize_title(item_j.title)
+                    )
                     if title_sim >= settings.halfday_merge_title_threshold:
                         group_items.append(item_j)
                         group_indices.append(j)

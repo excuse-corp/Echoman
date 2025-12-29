@@ -15,7 +15,7 @@ from sqlalchemy import select, func, update
 import json
 import logging
 
-from app.models import Summary, Topic, TopicNode, SourceItem, LLMJudgement, Embedding
+from app.models import Summary, Topic, TopicNode, SourceItem, LLMJudgement
 from app.services.llm.factory import get_llm_provider
 from app.services.llm import get_embedding_provider
 from app.services.vector_service import get_vector_service
@@ -304,60 +304,30 @@ class SummaryService:
         self,
         db: AsyncSession,
         summary: Summary
-    ) -> Embedding:
-        """
-        为摘要生成向量
-        
-        Args:
-            db: 数据库会话
-            summary: 摘要对象
-        
-        Returns:
-            Embedding对象
-        """
+    ) -> None:
+        """为摘要生成向量（纯 Chroma 存储）"""
         logger.info(f"   🔢 开始为摘要生成向量 (Summary ID: {summary.id})")
         
         try:
-            # 生成向量
             vectors = await self.embedding_provider.embedding([summary.content])
-            
-            # 保存到PostgreSQL
-            embedding = Embedding(
-                object_type="topic_summary",
-                object_id=summary.id,
-                provider=self.embedding_provider.get_provider_name(),
-                model=self.embedding_provider.model,
-                vector=vectors[0]
+            vector_service = get_vector_service()
+            if vector_service.db_type != "chroma":
+                raise RuntimeError("Chroma 未初始化，无法存储摘要向量")
+
+            vector_service.add_embeddings(
+                ids=[f"topic_summary_{summary.id}"],
+                embeddings=[vectors[0]],
+                metadatas=[{
+                    "object_type": "topic_summary",
+                    "object_id": int(summary.id),
+                    "topic_id": int(summary.topic_id),
+                    "generated_at": summary.generated_at.timestamp()
+                }],
+                documents=[summary.content[:500]]
             )
-            db.add(embedding)
-            await db.commit()
-            
-            logger.info(f"   ✅ 摘要向量生成完成 (Embedding ID: {embedding.id})")
-            
-            # 同步到Chroma
-            try:
-                vector_service = get_vector_service()
-                if vector_service.db_type == "chroma":
-                    vector_service.add_embeddings(
-                        ids=[f"topic_summary_{summary.id}"],
-                        embeddings=[vectors[0]],
-                        metadatas=[{
-                            "object_type": "topic_summary",
-                            "object_id": int(summary.id),
-                            "topic_id": int(summary.topic_id),
-                            "generated_at": summary.generated_at.timestamp()
-                        }],
-                        documents=[summary.content[:500]]
-                    )
-                    logger.info(f"   ✅ 向量已同步到Chroma")
-            except Exception as e:
-                logger.warning(f"   ⚠️  Chroma同步失败（不影响主流程）: {e}")
-            
-            return embedding
-            
+            logger.info(f"   ✅ 向量已写入 Chroma")
         except Exception as e:
-            logger.error(f"摘要向量生成失败: {e}")
-            raise
+            logger.warning(f"摘要向量生成失败（跳过但不影响摘要）：{e}")
     
     def _select_key_nodes(self, nodes: List[TopicNode]) -> List[TopicNode]:
         """
@@ -925,4 +895,3 @@ class SummaryService:
             .values(summary_id=summary_id, updated_at=now_cn())
         )
         await db.commit()
-

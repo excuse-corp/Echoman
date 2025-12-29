@@ -11,7 +11,7 @@ RAG对话服务
 from typing import List, Dict, Optional, Tuple, AsyncGenerator
 from app.utils.timezone import now_cn
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, and_, or_, text
+from sqlalchemy import select
 import json
 import logging
 import asyncio
@@ -21,8 +21,10 @@ from app.models import (
     Chat
 )
 from app.services.llm.factory import get_llm_provider
+from app.services.vector_service import get_vector_service
 from app.config import settings
 from app.utils.token_manager import get_token_manager
+import numpy as np
 
 logger = logging.getLogger(__name__)
 
@@ -407,43 +409,47 @@ class RAGService:
         query_embedding: List[float],
         limit: int = 5
     ) -> List[TopicNode]:
-        """向量检索主题内的节点"""
-        # 使用pgvector进行相似度搜索
-        embedding_str = f"[{','.join(map(str, query_embedding))}]"
-        
-        stmt = text("""
-            SELECT tn.id, tn.topic_id, tn.source_item_id, tn.appended_at,
-                   (e.vector <=> :query_vector::vector) as distance
-            FROM topic_nodes tn
-            JOIN embeddings e ON e.object_type = 'topic_node' AND e.object_id = tn.id
-            WHERE tn.topic_id = :topic_id
-            ORDER BY distance ASC
-            LIMIT :limit
-        """)
-        
-        result = await db.execute(
-            stmt,
-            {
-                "topic_id": topic_id,
-                "query_vector": embedding_str,
-                "limit": limit
-            }
-        )
-        
-        # 获取完整的TopicNode对象
-        node_ids = [row[0] for row in result]
-        if not node_ids:
-            return []
-        
+        """向量检索主题内的节点（Chroma 优先，降级为最新节点）"""
+        vector_service = get_vector_service()
+
+        # 从数据库拿到该主题的节点及其 source_item
         from sqlalchemy.orm import joinedload
-        
         nodes_stmt = (
             select(TopicNode)
             .options(joinedload(TopicNode.source_item))
-            .where(TopicNode.id.in_(node_ids))
+            .where(TopicNode.topic_id == topic_id)
         )
         nodes_result = await db.execute(nodes_stmt)
-        return list(nodes_result.scalars().all())
+        nodes = list(nodes_result.scalars().all())
+        if not nodes:
+            return []
+
+        if vector_service.db_type != "chroma":
+            # 没有 Chroma 时退化：直接返回最新节点
+            nodes.sort(key=lambda n: n.appended_at, reverse=True)
+            return nodes[:limit]
+
+        scored = []
+        for node in nodes:
+            if not node.source_item_id:
+                continue
+            vec = vector_service.get_embedding("source_item", int(node.source_item_id))
+            if vec is None:
+                continue
+            # 计算余弦相似度
+            a = np.array(query_embedding)
+            b = np.array(vec)
+            if np.linalg.norm(a) == 0 or np.linalg.norm(b) == 0:
+                continue
+            sim = float(np.dot(a, b) / (np.linalg.norm(a) * np.linalg.norm(b)))
+            scored.append((sim, node))
+
+        if not scored:
+            nodes.sort(key=lambda n: n.appended_at, reverse=True)
+            return nodes[:limit]
+
+        scored.sort(key=lambda x: x[0], reverse=True)
+        return [n for _, n in scored[:limit]]
     
     async def _vector_search_topics(
         self,
@@ -451,36 +457,41 @@ class RAGService:
         query_embedding: List[float],
         limit: int = 10
     ) -> List[Topic]:
-        """向量检索相关主题"""
-        embedding_str = f"[{','.join(map(str, query_embedding))}]"
-        
-        # 搜索主题摘要的embedding
-        stmt = text("""
-            SELECT t.id, (e.vector <=> :query_vector::vector) as distance
-            FROM topics t
-            JOIN summaries s ON s.id = t.summary_id
-            JOIN embeddings e ON e.object_type = 'topic_summary' AND e.object_id = s.id
-            WHERE t.status = 'active'
-            ORDER BY distance ASC
-            LIMIT :limit
-        """)
-        
-        result = await db.execute(
-            stmt,
-            {
-                "query_vector": embedding_str,
-                "limit": limit
-            }
-        )
-        
-        # 获取完整的Topic对象
-        topic_ids = [row[0] for row in result]
-        if not topic_ids:
-            return []
-        
+        """向量检索相关主题（Chroma 优先）"""
+        vector_service = get_vector_service()
+
+        if vector_service.db_type == "chroma":
+            try:
+                ids, distances, metadatas = vector_service.search_similar(
+                    query_embedding=query_embedding,
+                    top_k=limit * 2,
+                    where={"object_type": "topic_summary"}
+                )
+                topic_ids_ordered = []
+                for meta, dist in zip(metadatas, distances):
+                    tid = meta.get("topic_id") if meta else None
+                    if tid and tid not in topic_ids_ordered:
+                        topic_ids_ordered.append(tid)
+                    if len(topic_ids_ordered) >= limit:
+                        break
+                
+                if not topic_ids_ordered:
+                    return []
+
+                topics_stmt = select(Topic).where(Topic.id.in_(topic_ids_ordered))
+                topics_result = await db.execute(topics_stmt)
+                topics = {t.id: t for t in topics_result.scalars().all()}
+                # 按检索顺序返回
+                return [topics[tid] for tid in topic_ids_ordered if tid in topics]
+            except Exception as e:
+                logger.warning(f"Chroma 主题向量检索失败，回退：{e}")
+
+        # 回退：最新活跃主题
         topics_stmt = (
             select(Topic)
-            .where(Topic.id.in_(topic_ids))
+            .where(Topic.status == "active")
+            .order_by(Topic.last_active.desc())
+            .limit(limit)
         )
         topics_result = await db.execute(topics_stmt)
         return list(topics_result.scalars().all())
@@ -679,4 +690,3 @@ class RAGService:
         await db.commit()
         await db.refresh(chat)
         return chat
-

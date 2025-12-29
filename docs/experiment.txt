@@ -61,7 +61,7 @@ Providers (LLM/Embedding)
 Notes
 - Use pgvector for ANN search; pg_trgm for BM25-like/fuzzy matching.
 - Schedule ingestion: 8:00-22:00, every 2 hours (8 times/day).
-- Schedule merge: Batch mode (2 times/day), 12:15+12:30 (AM), 22:15+22:30 (PM).
+- Schedule merge: Batch mode (3 times/day), 12:05+12:20 (AM), 18:05+18:20 (PM), 22:05+22:20 (EVE).
 - Period format: Halfday (2025-11-07_AM, 2025-11-07_PM).
 - Data latency: ~15-30 minutes between last collection and merge.
 - Enforce timeouts, retries, rate limits for crawl and LLM.

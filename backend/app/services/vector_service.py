@@ -173,6 +173,21 @@ class VectorService:
         except Exception as e:
             print(f"❌ 获取Chroma统计信息失败: {e}")
             return {"type": "chroma", "error": str(e)}
+
+    def get_embedding(self, object_type: str, object_id: int) -> Optional[List[float]]:
+        """按对象类型和ID从Chroma获取向量（仅Chroma模式）"""
+        if self.db_type != "chroma" or not self.collection:
+            return None
+
+        chroma_id = f"{object_type}_{object_id}"
+        try:
+            result = self.collection.get(ids=[chroma_id], include=["embeddings"])
+            embeddings = result.get("embeddings") if result else None
+            if embeddings is not None and len(embeddings) > 0:
+                return embeddings[0]
+        except Exception as e:
+            print(f"❌ 从Chroma获取向量失败: {e}")
+        return None
     
     def reset_collection(self) -> bool:
         """
@@ -219,4 +234,3 @@ def get_vector_service() -> VectorService:
         _vector_service_instance = VectorService()
     
     return _vector_service_instance
-

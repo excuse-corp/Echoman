@@ -255,14 +255,15 @@
   4. **占比计算**：半日内所有事件的 `heat_normalized` 之和为 1.0，每个事件占比即为其 `heat_normalized` 值。
 
 4) **半日归并（Halfday Merge）**
-- **触发时机**：12:00 和 22:00 采集完成并完成热度归一化后分别执行（每日 2 次）。
+- **触发时机**：每天 3 次（12:05/18:05/22:05，Asia/Shanghai），采集与热度归一化后执行。
 - **输入**：半日内所有采集批次暂存的 source_items。
   - 上半日（AM）：8:00、10:00、12:00 三次采集（约 60-90 条）
   - 下半日（PM）：14:00、16:00、18:00、20:00、22:00 五次采集（约 100-150 条）
 - **流程**：
   1. **向量检索 + 标题聚类**：
      - 使用 Qwen3-Embedding-8B 对半日内所有 item 进行向量化。
-     - 基于向量相似度（余弦相似度 > 0.85）+ 标题 n-gram Jaccard（> 0.6）进行初步聚类。
+     - 对标题先做归一化（全角转半角、去标点、数字归一、压缩空白）后，再计算 n-gram Jaccard。
+     - 基于向量相似度（余弦相似度 > 0.80）+ 标题 2-gram Jaccard（> 0.4）进行初步聚类。
      - 形成候选归并组（同一事件的多次出现）。
   2. **LLM 精确判定**（Qwen3-32B）：
      - 对每个候选组，批量调用 LLM 判定是否为同一事件。
@@ -287,11 +288,11 @@
      - 丢弃的单次出现事件记录到日志，便于分析。
 
 5) **整体归并（Global Merge）**
-- **触发时机**：半日归并完成后立即执行（每日 2 次：12:00 后和 22:00 后）。
+- **触发时机**：半日归并完成后执行（每日 3 次：12:20/18:20/22:20，Asia/Shanghai）。
 - **输入**：半日归并后保留的事件（`pending_global_merge`）。
 - **流程**：
   1. **候选集检索**：
-     - 使用 pgvector + Qwen3-Embedding-8B 检索库中已有的 active topics（`status = active`）。
+     - 使用向量库检索（优先 Chroma）+ Qwen3-Embedding-8B 检索库中已有的 active topics（`status = active`）。
      - 召回与半日事件向量相似度 > 0.80 的 Top-10 候选 topics。
   2. **LLM 关联判定**（Qwen3-32B）：
      - 批量判定半日事件与候选 topics 是否相关联（同一主题的新进展）。
@@ -480,10 +481,10 @@
 - 关键变量：
   - `DB_URL`、`REDIS_URL`、`LLM_PROVIDER`、`OPENAI_API_KEY`/`AZURE_*`/`DASHSCOPE_API_KEY`
   - **`CRON_INGEST_SCHEDULE`**（默认 `0 8,10,12,14,16,18,20,22 * * *`，每 2 小时采集一次）
-  - **`CRON_HALFDAY_MERGE_SCHEDULE_NOON`**（默认 `15 12 * * *`，每日 12:15 触发上半日归并）
-  - **`CRON_HALFDAY_MERGE_SCHEDULE_NIGHT`**（默认 `15 22 * * *`，每日 22:15 触发下半日归并）
-  - **`CRON_GLOBAL_MERGE_SCHEDULE_NOON`**（默认 `30 12 * * *`，每日 12:30 触发上半日整体归并）
-  - **`CRON_GLOBAL_MERGE_SCHEDULE_NIGHT`**（默认 `30 22 * * *`，每日 22:30 触发下半日整体归并）
+  - **`CRON_HALFDAY_MERGE_SCHEDULE_NOON`**（默认 `5 12 * * *`，每日 12:05 触发上午归并）
+  - **`CRON_HALFDAY_MERGE_SCHEDULE_NIGHT`**（默认 `5 22 * * *`，每日 22:05 触发傍晚归并）
+  - **`CRON_GLOBAL_MERGE_SCHEDULE_NOON`**（默认 `20 12 * * *`，每日 12:20 触发上午整体归并）
+  - **`CRON_GLOBAL_MERGE_SCHEDULE_NIGHT`**（默认 `20 22 * * *`，每日 22:20 触发傍晚整体归并）
   - **`QWEN_MODEL`**（默认 `qwen3-32b`，本地 LLM 模型）
   - **`QWEN_EMBEDDING_MODEL`**（默认 `Qwen3-Embedding-8B`，本地嵌入模型）
   - **`HALFDAY_MERGE_MIN_OCCURRENCE`**（默认 `2`，半日归并最小出现次数）
@@ -508,14 +509,14 @@
   - normalize_and_dedup：清洗、URL/内容去重（非 LLM）。
   - store_pending：暂存到 Redis 或临时表，标记 `pending_halfday_merge` + 时段标识（AM/PM）。
   
-  **第二阶段：半日归并（12:15 和 22:15 触发，每日 2 次）**
+  **第二阶段：新事件归并（12:05 / 18:05 / 22:05 触发，每日 3 次）**
   - heat_normalization：对半日内所有暂存数据进行热度归一化（Min-Max + 平台权重）。
   - halfday_vector_cluster：使用 Qwen3-Embedding-8B 向量化 + 标题聚类，形成候选归并组。
   - halfday_merge_judge_llm：批量调用 Qwen3-32B 判定同组事件，标记 `halfday_merge_group_id`。
   - filter_by_occurrence：统计 `occurrence_count`，保留 ≥2 次的事件，丢弃单次出现。
   - aggregate_halfday_heat：计算每个归并组的半日热度（平均或最大）。
   
-  **第三阶段：整体归并（12:30 和 22:30 触发，每日 2 次）**
+  **第三阶段：整体归并（12:20 / 18:20 / 22:20 触发，每日 3 次）**
   - retrieve_candidates：使用 pgvector 检索库中相似的 active topics（Top-10）。
   - global_merge_judge_llm：批量判定新事件与候选 topics 的关联性（Qwen3-32B）。
   - append_or_create：merge 则追加 topic_node，new 则创建新 topic。
@@ -563,25 +564,26 @@
 10:00 → 采集批次 #2 → 暂存（标记 AM）
 12:00 → 采集批次 #3 → 暂存（标记 AM）
 
-12:15 → 上半日归并触发
+12:05 → 上午归并触发
   ├─ 步骤1: 热度归一化（Min-Max + 平台权重，针对上半日数据）
-  ├─ 步骤2: 向量聚类（Qwen3-Embedding-8B，余弦相似度 > 0.85）
+  ├─ 步骤2: 向量聚类（Qwen3-Embedding-8B，余弦相似度 > 0.80）
+  ├─ 步骤2b: 标题归一化后 2-gram Jaccard（> 0.4）辅助过滤
   ├─ 步骤3: LLM 判定（Qwen3-32B，批量判定同组事件）
   ├─ 步骤4: 出现次数筛选（occurrence_count >= 2 保留，= 1 丢弃）
   ├─ 步骤5: 热度聚合（计算每组归一化热度）
   └─ 输出: 保留事件 → pending_global_merge
 
-12:30 → 上半日整体归并触发
-  ├─ 步骤1: 候选检索（pgvector 检索 active topics，Top-10）
+12:20 → 上午整体归并触发
+  ├─ 步骤1: 候选检索（优先 Chroma 检索 active topics，Top-10）
   ├─ 步骤2: LLM 关联判定（Qwen3-32B，判定是否为已有主题进展）
   ├─ 步骤3: 归并或新建
   │   ├─ merge → 追加 topic_node，更新 last_active
   │   └─ new → 创建新 topic
   ├─ 步骤4: 热度更新（topic_halfday_heat 表，period=AM）
   ├─ 步骤5: 分类与摘要（LLM 分类 + 增量摘要）
-  ├─ 步骤6: 向量索引（pgvector 入库）
+  ├─ 步骤6: 向量写入（纯 Chroma 存储）
   ├─ 步骤7: 指标聚合（category_day_metrics）
-  └─ 步骤8: 通知前端（WebSocket/轮询，第 1 次更新）
+  └─ 步骤8: 通知前端（轮询，第 1 次更新）
 
 【下半日（PM）】
 14:00 → 采集批次 #4 → 暂存（标记 PM）
@@ -590,39 +592,40 @@
 20:00 → 采集批次 #7 → 暂存（标记 PM）
 22:00 → 采集批次 #8 → 暂存（标记 PM）
 
-22:15 → 下半日归并触发
+18:05 → 下午归并触发
   ├─ 步骤1: 热度归一化（Min-Max + 平台权重，针对下半日数据）
-  ├─ 步骤2: 向量聚类（Qwen3-Embedding-8B，余弦相似度 > 0.85）
+  ├─ 步骤2: 向量聚类（Qwen3-Embedding-8B，余弦相似度 > 0.80）
+  ├─ 步骤2b: 标题归一化后 2-gram Jaccard（> 0.4）辅助过滤
   ├─ 步骤3: LLM 判定（Qwen3-32B，批量判定同组事件）
   ├─ 步骤4: 出现次数筛选（occurrence_count >= 2 保留，= 1 丢弃）
   ├─ 步骤5: 热度聚合（计算每组归一化热度）
   └─ 输出: 保留事件 → pending_global_merge
 
-22:30 → 下半日整体归并触发
-  ├─ 步骤1: 候选检索（pgvector 检索 active topics，Top-10）
+18:20 → 下午整体归并触发
+  ├─ 步骤1: 候选检索（优先 Chroma 检索 active topics，Top-10）
   ├─ 步骤2: LLM 关联判定（Qwen3-32B，判定是否为已有主题进展）
   ├─ 步骤3: 归并或新建
   │   ├─ merge → 追加 topic_node，更新 last_active
   │   └─ new → 创建新 topic
   ├─ 步骤4: 热度更新（topic_halfday_heat 表，period=PM）
   ├─ 步骤5: 分类与摘要（LLM 分类 + 增量摘要）
-  ├─ 步骤6: 向量索引（pgvector 入库）
+  ├─ 步骤6: 向量写入（纯 Chroma 存储）
   ├─ 步骤7: 指标聚合（category_day_metrics）
-  └─ 步骤8: 通知前端（WebSocket/轮询，第 2 次更新）
+  └─ 步骤8: 通知前端（轮询，第 2 次更新）
 ```
 
 ### 关键决策点
 
 1. **半日归并：同一事件判定标准**
-   - 向量相似度 > 0.85
-   - 标题 n-gram Jaccard > 0.6
+   - 向量相似度 > 0.80
+   - 标题归一化后 2-gram Jaccard > 0.4
    - LLM 判定置信度 > 0.80
    - 核心实体重叠（人物/地点/机构）
 
 2. **半日归并：出现次数阈值**
    - 默认 >= 2 次保留（可配置 `HALFDAY_MERGE_MIN_OCCURRENCE`）
    - 单次出现事件视为噪音/偶然热点，不入库
-   - 上半日 3 次采集，下半日 5 次采集，筛选强度不同
+   - 上午/下午各 3 次采集，傍晚 2 次采集（occurrence_count 仍统一 ≥2）
 
 3. **整体归并：关联判定标准**
    - 向量相似度 > 0.80（候选召回）
@@ -655,7 +658,7 @@
 source_items (采集原子项)
   ↓ [暂存标记: pending_halfday_merge + period (AM/PM)]
   ↓
-  ↓ [12:15 上半日归并 / 22:15 下半日归并]
+  ↓ [12:05 上午归并 / 18:05 下午归并 / 22:05 傍晚归并]
   ↓ - 热度归一化 → heat_normalized
   ↓ - 向量聚类 + LLM 判定 → halfday_merge_group_id
   ↓ - 出现次数统计 → occurrence_count
@@ -663,7 +666,7 @@ source_items (采集原子项)
   ↓
 source_items (保留事件, 标记: pending_global_merge)
   ↓
-  ↓ [12:30 上半日整体归并 / 22:30 下半日整体归并]
+  ↓ [12:20 上午整体归并 / 18:20 下午整体归并 / 22:20 傍晚整体归并]
   ↓ - 向量检索 active topics
   ↓ - LLM 关联判定
   ↓
@@ -704,7 +707,7 @@ topic_id | date       | period | heat_normalized | heat_percentage | source_coun
    - 采集阶段：7 个平台并发采集（限流保护）
    - 向量化阶段：批量嵌入（batch_size=32）
    - LLM 判定阶段：控制并发数避免 OOM
-   - 两次归并可能存在时间重叠（12:30 和 14:00 采集），需注意并发安全
+   - 归并与采集可能存在时间重叠（如 12:20 与 14:00），需注意并发安全
 
 3. **缓存策略**：
    - Redis 缓存暂存数据（TTL=12h，半日清理）
@@ -804,8 +807,8 @@ topic_id | date       | period | heat_normalized | heat_percentage | source_coun
 - ✅ Celery配置（`backend/app/tasks/`）
 - ✅ Beat调度配置
 - ❌ 采集定时任务（8:00-22:00，每2小时）
-- ❌ 半日归并任务（12:15, 22:15）
-- ❌ 整体归并任务（12:30, 22:30）
+- ❌ 半日归并任务（12:15, 22:15）已废弃（当前为 12:05/18:05/22:05）
+- ❌ 整体归并任务（12:30, 22:30）已废弃（当前为 12:20/18:20/22:20）
 - ❌ 分类指标计算任务
 
 #### 🚧 待实现的核心功能
