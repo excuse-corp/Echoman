@@ -29,6 +29,7 @@
 - 批量上限：每轮最多处理 **200** 个事件组。
 - Token 控制：prompt≈2500，候选摘要截断 200，completion 300。
 - 向量库：纯 **Chroma**，集合 `echoman_embeddings`，对象类型 `source_item` / `topic_summary`。
+- 新建 Topic 热度截断：`GLOBAL_MERGE_NEW_TOPIC_KEEP_RATIO`（默认 1.0）。若设为 0.5，则按当前热度保留前 50%，其余直接下线（status=ended），不做二次归一化。
 
 ### 流程
 1. **代表项**：每组取一条代表 item（标题+摘要）。
@@ -59,7 +60,8 @@
 
 ## 近期改动要点
 - 阶段二候选时间窗由 7 天扩至 **180 天**；候选数量固定 **Top-K=3**。  
-+- 新建/合并时**同步写占位摘要+向量**，防止同一轮出现重复 Topic。  
+- 新建/合并时**同步写占位摘要+向量**，防止同一轮出现重复 Topic。  
+- 新建 Topic 热度截断：`GLOBAL_MERGE_NEW_TOPIC_KEEP_RATIO` 支持按热度比例保留（默认 1.0，现配置 0.5）；被截断的 Topic 直接 `ended`，热度清零，不二次归一化。  
 - 纯 Chroma 模式（不再使用 pgvector）；摘要向量作为主要召回索引。  
 
 ## 前端关注点

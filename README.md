@@ -34,15 +34,24 @@ Echoman 是一个热点事件聚合与回声追踪系统，通过采集多个平
 #### 1. 启动后端
 
 ```bash
-# 在项目根目录运行
-python backend.py
+# 在项目根目录运行（后台一键启动 API + Worker + Beat + 数据库）
+./start.sh
+
+# 或需前台查看日志/自定义组合：
+python backend.py --all --db --restart-celery
 ```
 
 首次运行会自动：
-- 启动 PostgreSQL 和 Redis（使用 Docker）
+- 启动 PostgreSQL 和 Redis（使用 Docker，需已安装 docker-compose）
 - 安装 Python 依赖
 - 初始化数据库表结构
 - 启动 FastAPI 服务器（端口 8778）
+
+停止所有后端服务：
+
+```bash
+./stop.sh
+```
 
 #### 2. 启动前端
 
@@ -68,6 +77,7 @@ python frontend.py
 - **[项目状态](./backend/PROJECT_STATUS.md)** - 当前实现进度和待办事项
 - **[API 规范](./docs/api-spec.md)** - API 接口文档
 - **[方案设计](./docs/backend-solution.md)** - 系统设计方案
+- **[服务端口与路径一览](./docs/service-map.md)** - 各服务启动命令、端口汇总
 
 ## 📊 项目状态
 
@@ -167,23 +177,23 @@ Echoman/
 
 ```bash
 # 触发采集
-curl -X POST "http://localhost:8000/api/v1/ingest/run" \
+curl -X POST "http://localhost:8778/api/v1/ingest/run" \
   -H "Content-Type: application/json" \
   -d '{"platforms": ["weibo", "zhihu"], "limit": 10}'
 
 # 查看采集历史
-curl "http://localhost:8000/api/v1/ingest/runs"
+curl "http://localhost:8778/api/v1/ingest/runs"
 
 # 查看话题列表
-curl "http://localhost:8000/api/v1/topics?page=1&size=20"
+curl "http://localhost:8778/api/v1/topics?page=1&size=20"
 
 # 查看平台状态
-curl "http://localhost:8000/api/v1/ingest/sources/status"
+curl "http://localhost:8778/api/v1/ingest/sources/status"
 ```
 
 ### 使用 API 文档
 
-访问 http://localhost:8000/docs 使用交互式 API 文档。
+访问 http://localhost:8778/docs 使用交互式 API 文档。
 
 ## 🔧 高级功能
 
@@ -268,4 +278,3 @@ MIT License
 **提示**: 首次启动可能需要几分钟时间下载依赖和初始化数据库，请耐心等待。
 
 **开始使用**: 运行 `python backend.py` 和 `python frontend.py` 即可启动整个系统！
-

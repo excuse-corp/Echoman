@@ -2,47 +2,41 @@
 
 ## 🚀 快速启动（推荐方式）
 
-### 1. 启动后端（一键启动所有服务）
+### 1. 启动后端（一键脚本）
 
 在项目根目录运行：
 
 ```bash
-python backend.py --all
+./start.sh
 ```
 
-**或者使用交互式菜单选择服务：**
+效果：
+- 启动 FastAPI（端口 **8778**）、Celery Worker、Celery Beat
+- 自动 `docker-compose up -d postgres redis`（需已安装 docker-compose）
+- 写日志到 `backend_services.log`，PID 保存在 `backend_services.pid`
+
+如需停止所有后端服务：
 
 ```bash
-python backend.py
+./stop.sh
 ```
 
-这会启动：
-- ✅ FastAPI 服务器（端口 8000）- API 接口
-- ✅ Celery Worker - 执行异步任务
-- ✅ Celery Beat - 定时任务调度（自动采集）
+### 自定义启动组合
 
-首次运行时会：
-- 自动检查并启动 PostgreSQL 和 Redis（使用 Docker）
-- 安装 Python 依赖
-- 初始化数据库表结构
-- 启动所有后端服务
-
-### 启动选项
-
-根据需求，你可以选择启动不同的服务组合：
+- 前台查看日志 / 精细控制：
 
 ```bash
-# 启动所有服务（推荐）
-python backend.py --all
+python backend.py --all --db --restart-celery
+```
 
-# 仅启动 API 服务器（快速开发）
-python backend.py --api
+其他示例：
 
-# 启动 API + Worker（手动触发采集）
-python backend.py --api --worker
-
-# 启动 API + Worker + Beat（完整功能，自动采集）
-python backend.py --all
+```bash
+python backend.py --api                 # 仅 API
+python backend.py --worker              # 仅 Worker
+python backend.py --beat                # 仅 Beat
+python backend.py --api --worker        # API + Worker
+python backend.py --all                 # API + Worker + Beat（不自动启 DB）
 ```
 
 ### 2. 启动前端
@@ -60,8 +54,8 @@ python frontend.py
 ### 3. 访问应用
 
 - **前端界面**: http://localhost:5173
-- **后端 API 文档**: http://localhost:8000/docs
-- **健康检查**: http://localhost:8000/health
+- **后端 API 文档**: http://localhost:8778/docs
+- **健康检查**: http://localhost:8778/health
 
 ## 详细说明
 
@@ -88,7 +82,7 @@ python frontend.py
    - 显示已创建的表列表
 
 5. **启动选定的服务**
-   - **FastAPI 服务器**: 监听 0.0.0.0:8000，提供 API 接口
+   - **FastAPI 服务器**: 监听 0.0.0.0:8778，提供 API 接口
    - **Celery Worker**: 执行异步任务（如采集任务）
    - **Celery Beat**: 定时任务调度器，按时间表自动触发采集
    - 所有服务在同一终端运行，按 Ctrl+C 可一次性停止所有服务
@@ -182,29 +176,29 @@ SELECT * FROM topics;  # 查询数据
 \q                     # 退出
 ```
 
-## 测试 API
+## 测试 API（端口 8778）
 
 ### 使用 curl
 
 ```bash
 # 健康检查
-curl http://localhost:8000/health
+curl http://localhost:8778/health
 
 # 触发采集
-curl -X POST "http://localhost:8000/api/v1/ingest/run" \
+curl -X POST "http://localhost:8778/api/v1/ingest/run" \
   -H "Content-Type: application/json" \
   -d '{"platforms": ["weibo", "zhihu"], "limit": 10}'
 
 # 查看采集历史
-curl http://localhost:8000/api/v1/ingest/runs
+curl http://localhost:8778/api/v1/ingest/runs
 
 # 查看话题列表
-curl "http://localhost:8000/api/v1/topics?page=1&size=20"
+curl "http://localhost:8778/api/v1/topics?page=1&size=20"
 ```
 
 ### 使用 API 文档
 
-访问 http://localhost:8000/docs 使用交互式 API 文档测试接口。
+访问 http://localhost:8778/docs 使用交互式 API 文档测试接口。
 
 ## 📊 后端服务说明
 
@@ -212,7 +206,7 @@ curl "http://localhost:8000/api/v1/topics?page=1&size=20"
 
 | 组件 | 功能 | 必需 | 端口 |
 |------|------|------|------|
-| FastAPI | 提供 REST API 接口 | 是（前端通信） | 8000 |
+| FastAPI | 提供 REST API 接口 | 是（前端通信） | 8778 |
 | Celery Worker | 执行异步采集任务 | 否（手动触发采集需要） | - |
 | Celery Beat | 定时任务调度器 | 否（自动采集需要） | - |
 | PostgreSQL | 主数据库 | 是 | 5432 |
@@ -277,7 +271,7 @@ python backend.py --beat
 **解决**:
 ```bash
 # 查找占用端口的进程
-lsof -i :8000
+lsof -i :8778
 lsof -i :5173
 
 # 杀死进程
@@ -390,4 +384,3 @@ Echoman/
 ---
 
 **提示**: 首次启动可能需要几分钟时间下载依赖和初始化数据库，请耐心等待。
-

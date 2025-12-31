@@ -50,6 +50,7 @@ from app.utils.timezone import now_cn
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, and_, desc, func
 import numpy as np
+import math
 
 from app.config import settings
 from app.models import (
@@ -138,7 +139,7 @@ class GlobalMergeService:
             await self.summary_service._create_placeholder_summary(self.db, topic)  # type: ignore
             
         except Exception as e:
-            logger.warning(f\"确保摘要向量失败 (Topic {topic.id}): {e}\")
+            logger.warning(f"确保摘要向量失败 (Topic {topic.id}): {e}")
     
     async def run_global_merge(self, period: str) -> Dict[str, Any]:
         """
@@ -219,6 +220,9 @@ class GlobalMergeService:
             if new_topics:
                 print(f"\\n📝 开始批量生成摘要（{len(new_topics)}个新Topic）...")
                 await self._batch_generate_summaries(new_topics)
+
+            # 按热度下线部分新建Topic（默认不下线，配置 GLOBAL_MERGE_NEW_TOPIC_KEEP_RATIO 调整）
+            downselect_stats = await self._downselect_new_topics(new_topics, period)
             end_time = now_cn()
             duration_seconds = (end_time - start_time).total_seconds()
             print(f"✅ 归并完成: merge={merge_count}, new={new_count}, 耗时={duration_seconds:.2f}秒")
@@ -233,6 +237,8 @@ class GlobalMergeService:
                 "duration_seconds": duration_seconds,
                 "avg_seconds_per_group": duration_seconds / len(merge_groups) if merge_groups else 0
             }
+            if downselect_stats:
+                merge_stats.update(downselect_stats)
             try:
                 from app.services.frontend_update_service import update_frontend_after_merge
                 await update_frontend_after_merge(self.db, period, merge_stats)
@@ -902,6 +908,81 @@ class GlobalMergeService:
         summary_duration = (now_cn() - summary_start).total_seconds()
         print(f"✅ 摘要批量生成完成: 成功{success_count}, 失败{failed_count}, "
               f"耗时{summary_duration:.2f}秒 (平均{summary_duration/len(topics):.2f}秒/个)")
+
+    async def _downselect_new_topics(self, new_topics: List[Topic], period: str) -> Optional[Dict[str, Any]]:
+        """
+        按热度比例保留新建Topic，剩余设为 ended（物理下线，不二次归一化）
+        """
+        ratio = settings.global_merge_new_topic_keep_ratio
+        if not new_topics or ratio >= 1.0 or ratio <= 0:
+            return None
+
+        # 排序取前 N
+        sorted_topics = sorted(
+            new_topics,
+            key=lambda t: t.current_heat_normalized or 0,
+            reverse=True
+        )
+        keep_n = max(1, math.floor(len(sorted_topics) * ratio))
+        drop_topics = [t for t in sorted_topics[keep_n:]]
+
+        if not drop_topics:
+            return {
+                "new_topic_keep_ratio": ratio,
+                "new_topics_kept": keep_n,
+                "new_topics_ended": 0,
+            }
+
+        vector_service = get_vector_service()
+        drop_topic_ids = [t.id for t in drop_topics]
+
+        # 批量查询这些 Topic 的所有摘要，删除对应向量，避免影响后续召回
+        summary_vec_ids: List[str] = []
+        try:
+            stmt = select(Summary.id).where(Summary.topic_id.in_(drop_topic_ids))
+            res = await self.db.execute(stmt)
+            summary_ids = [row[0] for row in res.all()]
+            summary_vec_ids = [f"topic_summary_{sid}" for sid in summary_ids]
+        except Exception as e:
+            logger.warning(f"批量查询待下线Topic摘要失败: {e}")
+
+        for t in drop_topics:
+            t.status = "ended"
+            t.current_heat_normalized = 0
+            t.heat_percentage = 0
+            t.last_active = t.first_seen
+            # 同期半日热度也置零
+            try:
+                date_str, per = period.split("_")
+                stmt = select(TopicPeriodHeat).where(
+                    and_(
+                        TopicPeriodHeat.topic_id == t.id,
+                        TopicPeriodHeat.date == datetime.strptime(date_str, "%Y-%m-%d").date(),
+                        TopicPeriodHeat.period == per
+                    )
+                )
+                res = await self.db.execute(stmt)
+                heat_rec = res.scalar_one_or_none()
+                if heat_rec:
+                    heat_rec.heat_normalized = 0
+                    heat_rec.heat_percentage = 0
+            except Exception as e:
+                logger.warning(f"下线 Topic {t.id} 时更新热度失败: {e}")
+
+        # 删除摘要向量（批量）
+        if summary_vec_ids:
+            try:
+                vector_service.delete_by_ids(summary_vec_ids)
+            except Exception as e:
+                logger.warning(f"删除摘要向量失败(批量): {e}")
+
+        await self.db.commit()
+        print(f"  ⚖️  新建Topic按热度保留：总{len(new_topics)}，保留{keep_n}，下线{len(drop_topics)} (ratio={ratio})")
+        return {
+            "new_topic_keep_ratio": ratio,
+            "new_topics_kept": keep_n,
+            "new_topics_ended": len(drop_topics),
+        }
     
     async def _generate_single_summary(self, topic: Topic) -> bool:
         """

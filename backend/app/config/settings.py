@@ -81,6 +81,9 @@ class Settings(BaseSettings):
     global_merge_confidence_threshold: float = Field(default=0.75, description="整体归并LLM置信度阈值")
     global_merge_topk_candidates: int = Field(default=3, description="候选召回数量（最多3个）")
     global_merge_similarity_threshold: float = Field(default=0.5, description="整体归并向量相似度阈值（候选过滤）")
+    global_merge_new_topic_keep_ratio: float = Field(
+        default=1.0, description="整体归并中新建Topic按热度保留比例（0-1，0.5表示保留前50%）"
+    )
     
     # ========== 热度归一化配置 ==========
     heat_normalization_method: str = Field(default="minmax_weighted", description="热度归一化方法")

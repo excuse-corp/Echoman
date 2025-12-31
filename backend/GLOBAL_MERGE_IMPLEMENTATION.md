@@ -29,7 +29,7 @@
 ### 1.2 核心职责
 
 1. **输入**：`status=pending_global_merge` 且 `period` 匹配的事件组
-2. **处理**：向量检索（最近7天Topic） → LLM判定关联性 → 决策
+2. **处理**：向量检索（半年内 Topic，摘要向量，TopK≤3）→ LLM判定关联性 → 决策
 3. **输出**：
    - 更新 `Topics` 表（新建或更新）
    - 更新 `TopicNodes` 表（记录主题节点）
@@ -79,15 +79,19 @@ async def run_global_merge(self, period: str) -> Dict[str, Any]:
    ├─ 返回：{"action": "merge"|"new", "target_topic_id": X}
    └─ 统计：merge_count, new_count
 
-5. 批量生成摘要
+5. 批量生成摘要并写入 Chroma
    ├─ 收集新创建的Topics
-   └─ 调用 _batch_generate_summaries()
+   └─ 调用 _batch_generate_summaries()（full 摘要 + topic_summary_* 向量）
 
-6. 更新前端数据
+6. 热度截断新建 Topic（可配置）
+   ├─ `_downselect_new_topics()` 按 `GLOBAL_MERGE_NEW_TOPIC_KEEP_RATIO`（默认 0.5）保留热度前 N
+   ├─ 下线的 Topic 置 ended、热度清零，并删除摘要向量
+
+7. 更新前端数据
    ├─ 调用 update_frontend_after_merge()
    └─ 记录归并完成事件到 runs_pipeline
 
-7. 返回统计结果
+8. 返回统计结果
 ```
 
 ---
@@ -113,11 +117,11 @@ async def _process_event_group(
 │ Step 1: 向量检索候选Topics                                   │
 │ _retrieve_candidate_topics(representative_item)             │
 │                                                              │
-│ ├─ 从Embedding表获取item的向量                               │
-│ ├─ 使用Chroma向量数据库搜索相似source_items                  │
-│ ├─ 通过TopicNode反查对应的Topic（仅最近7天）                │
-│ ├─ 去重，返回 Top-10 候选                                    │
-│ └─ 返回：[{topic_id, title, last_active, similarity}, ...]  │
+│ ├─ 使用 Chroma topic_summary 向量检索（TopK≤3）              │
+│ ├─ 时间窗口：最近 180 天的活跃 Topic                         │
+│ ├─ 相似度阈值：>= global_merge_similarity_threshold          │
+│ ├─ 去重，返回候选列表                                        │
+│ └─ 回退：按最近活跃时间取 top_k                              │
 └─────────────────────────────────────────────────────────────┘
                            ↓
                     有候选？ 无候选
@@ -148,52 +152,41 @@ async def _process_event_group(
 
 ## 🔍 三、核心算法详解
 
-### 3.1 向量检索候选Topics
+### 3.1 向量检索候选Topics（纯 Chroma · 摘要向量版）
 
 **文件位置**: `_retrieve_candidate_topics()` (第320-442行)
 
-**算法流程**：
+**算法流程**（已优化）：
 
 ```python
-1. 查询输入item的向量（从Embedding表）
-   └─ 如果没有向量，返回空列表
+1. 获取代表 item 的向量
+   └─ 来自 Chroma，object_type = "source_item"
 
-2. 使用Chroma向量数据库进行语义搜索
-   ├─ query_embedding: item的向量
-   ├─ top_k: 10 * 3 = 30（多召回，后续过滤）
-   ├─ where: {"object_type": "source_item"}
-   └─ 返回：(ids, distances, metadatas)
+2. 在 Chroma 中检索 topic_summary 向量
+   ├─ where: {"object_type": "topic_summary"}
+   ├─ top_k: min(settings.global_merge_topk_candidates, 3)  # 上限 3
+   └─ 召回 2x 再过滤（召回 top_k*2，过滤后取前 top_k）
 
-3. 从搜索结果反查Topic
-   For each similar_source_item:
-     ├─ 查询 TopicNode 找到关联的Topic
-     ├─ 过滤条件：
-     │   ├─ Topic.status == "active"
-     │   ├─ Topic.last_active >= 7天前  ← 关键优化！
-     │   └─ 去重（seen_topics set）
-     ├─ 收集候选信息：
-     │   ├─ topic_id
-     │   ├─ title_key
-     │   ├─ last_active
-     │   ├─ length_hours (持续时长)
-     │   └─ similarity (1 - distance)
-     └─ 达到top_k=10个后停止
+3. 过滤与查询 Topic
+   ├─ 相似度阈值：similarity >= settings.global_merge_similarity_threshold (默认 0.5)
+   ├─ 时间窗口：Topic.last_active >= now - 180 天
+   ├─ 状态：Topic.status == "active"
+   └─ 去重：seen_topics
 
-4. 回退方案（如果Chroma失败）
-   └─ 直接查询数据库，按 last_active 降序取最近的10个Topic
+4. 结果收集
+   └─ 返回按相似度排序的候选（<=3 个）
+
+5. 回退方案
+   └─ 若 Chroma 检索失败，则按最近活跃时间获取 top_k 个 Topic（180 天窗口）
 ```
 
 **关键优化**：
 
-1. **只检索最近7天的Topic**  
-   - 避免与过时事件关联  
-   - 提升检索效率  
-   - 确保时效性
-
-2. **限制候选数量为10个**  
-   - 减少LLM判定的上下文长度  
-   - 控制Token消耗  
-   - 提升响应速度
+1. **摘要向量检索**：直接用 topic_summary 向量，质量和聚合度优于 source_item 向量。  
+2. **半年窗口**：`active_since = now - 180d`，兼顾时效与召回覆盖。  
+3. **TopK≤3**：控制 LLM 判定上下文长度，降低费用。  
+4. **相似度阈值可配置**：`GLOBAL_MERGE_SIMILARITY_THRESHOLD`（默认为 0.5）。  
+5. **向量回退**：Chroma 异常时用最近活跃 Topic，保证可用性。
 
 ---
 
@@ -203,7 +196,7 @@ async def _process_event_group(
 
 **输入**：
 - `item`: 新事件的代表性SourceItem
-- `candidates`: 候选Topics列表（最多10个）
+- `candidates`: 候选Topics列表（最多3个，摘要向量召回）
 - `period`: 归并周期
 
 **输出**：
@@ -255,7 +248,7 @@ prompt = f"""判断新事件是否为已有主题的新进展：
 判断标准：
 1. 如果新事件是某个候选主题的后续进展、新报道，则选择 "merge"
 2. 如果新事件与所有候选主题都无关，则选择 "new"
-3. 时间间隔不超过7天
+3. 时间间隔优先近期（默认检索窗口 180 天）
 4. 主题一致性强
 """
 ```
@@ -450,28 +443,20 @@ if total_groups > MAX_BATCH_SIZE:
 
 ---
 
-### 4.2 向量检索限制
+### 4.2 向量检索限制（已优化）
 
 ```python
-# 1. 候选数量限制
-top_k = min(top_k, 10)  # 最多10个候选
-
-# 2. 时间范围限制
-one_week_ago = now_cn() - timedelta(days=7)
-# 只检索最近7天的Topic
-
-# 3. 多召回后过滤
-ids, distances, metadatas = vector_service.search_similar(
-    query_embedding=item_embedding.vector,
-    top_k=top_k * 3,  # 召回30个，过滤后保留10个
-    where={"object_type": "source_item"}
-)
+# 1) 候选数量上限：top_k = min(config, 3)
+# 2) 时间窗口：active_since = now - 180 天
+# 3) 召回来源：Chroma collection，object_type = "topic_summary"
+# 4) 相似度阈值：similarity >= settings.global_merge_similarity_threshold (默认 0.5)
+# 5) 回退：若向量失败，按最近活跃时间取 top_k
 ```
 
 **优化效果**：
-- 减少LLM上下文长度：从 5000+ tokens → 2500 tokens
-- 提升检索速度：减少数据库查询量
-- 提高相关性：只与最近7天的Topic比对
+- 更精准：摘要向量降低噪声
+- 更稳健：半年窗口兼顾时效与覆盖
+- 更省：TopK≤3，LLM 判定上下文更短
 
 ---
 
@@ -704,11 +689,16 @@ max_candidate_summary_tokens = 200 # 每个候选摘要最大token
 global_merge_confidence_threshold = 0.7  # 置信度阈值（0-1）
 ```
 
-### 6.5 时间窗口配置
+### 6.5 时间窗口与热度截断配置
 
 ```python
 # backend/app/services/global_merge.py
-one_week_ago = now_cn() - timedelta(days=7)  # 只检索最近7天Topic
+active_since = now_cn() - timedelta(days=180)   # 检索半年内 Topic
+
+# backend/app/config/settings.py
+global_merge_similarity_threshold = 0.5         # 摘要向量相似度过滤
+global_merge_topk_candidates = 3                # 候选数上限 3
+global_merge_new_topic_keep_ratio = 0.5         # 新建 Topic 按热度保留比例
 ```
 
 ---
@@ -855,9 +845,9 @@ docs/数据流转架构.md                          # 系统架构文档
 
 **关键优化**：
 - 批量处理（200组/轮）
-- 候选限制（Top-10）
+- 候选限制（Top-3，摘要向量，半年窗口）
 - Token管理（2500 tokens）
-- 时间窗口（7天）
+- 新建 Topic 热度截断（`GLOBAL_MERGE_NEW_TOPIC_KEEP_RATIO`，默认保留前50%）
 
 **当前状态**：
 - ✅ 功能完整，逻辑正确
@@ -867,11 +857,10 @@ docs/数据流转架构.md                          # 系统架构文档
 **下一步**：
 1. 修复并发处理（独立会话）
 2. 添加超时控制
-3. 优化向量索引（Topic collection）
+3. 监控热度截断对召回的影响，必要时动态调整 `GLOBAL_MERGE_NEW_TOPIC_KEEP_RATIO`
 
 ---
 
 **维护者**: Echoman开发团队  
-**最后更新**: 2025-11-08  
-**版本**: v1.0
-
+**最后更新**: 2025-12-31  
+**版本**: v1.1（纯 Chroma，半年检索窗，热度截断）

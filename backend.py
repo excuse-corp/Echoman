@@ -15,6 +15,7 @@ Echoman 后端服务启动脚本
     python backend.py --worker     # 仅启动 Celery Worker
     python backend.py --beat       # 仅启动 Celery Beat
     python backend.py --api --worker --beat  # 启动指定的多个服务
+    python backend.py --all --db --restart-celery  # 启动全部服务并自动拉起数据库、重启已有的 celery
 """
 
 import os
@@ -297,6 +298,14 @@ def start_celery_beat(backend_dir: Path):
     return proc
 
 
+def stop_running_celery():
+    """尝试停止已存在的 celery worker/beat（粗粒度 pkill）"""
+    print("🛑 停止已运行的 Celery worker/beat（如有）...")
+    subprocess.run("pkill -f \"celery -A app.tasks.celery_app [w]orker\"", shell=True)
+    subprocess.run("pkill -f \"celery -A app.tasks.celery_app [b]eat\"", shell=True)
+    time.sleep(1)
+
+
 def parse_arguments():
     """解析命令行参数"""
     parser = argparse.ArgumentParser(
@@ -317,7 +326,9 @@ def parse_arguments():
     parser.add_argument("--api", action="store_true", help="启动 FastAPI 服务器")
     parser.add_argument("--worker", action="store_true", help="启动 Celery Worker")
     parser.add_argument("--beat", action="store_true", help="启动 Celery Beat")
+    parser.add_argument("--db", action="store_true", help="启动数据库服务（PostgreSQL + Redis，需 docker-compose）")
     parser.add_argument("--no-check", action="store_true", help="跳过数据库和依赖检查（不推荐）")
+    parser.add_argument("--restart-celery", action="store_true", help="启动前尝试停止已存在的 Celery worker/beat 进程（pkill）")
     
     return parser.parse_args()
 
@@ -415,15 +426,27 @@ def main():
         print("  ✅ Celery Worker (异步任务)")
     if services["beat"]:
         print("  ✅ Celery Beat (定时调度)")
+    if args.db:
+        print("  ✅ 自动启动数据库服务 (PostgreSQL + Redis, docker-compose)")
     print()
     
     # 步骤 1: 检查数据库服务（除非指定跳过）
     if not args.no_check:
+        # 如指定 --db，优先尝试启动数据库服务
+        if args.db:
+            if not start_database_services():
+                sys.exit(1)
+        
         postgres_ok = check_postgres()
         redis_ok = check_redis()
         
         if not postgres_ok or not redis_ok:
             print("\n⚠️  数据库服务未运行")
+            
+            if args.db:
+                print("❌ 已尝试自动启动数据库，但仍无法连接，请检查 docker-compose 及网络配置")
+                sys.exit(1)
+            
             print()
             print("您可以选择以下任一方式启动数据库:")
             print("  1. 使用 Docker (快速方便)")
@@ -493,6 +516,10 @@ def main():
     signal.signal(signal.SIGINT, signal_handler)
     signal.signal(signal.SIGTERM, signal_handler)
     
+    # 如需要，先停止已有的 celery 进程，避免重复启动
+    if args.restart_celery and (services["worker"] or services["beat"]):
+        stop_running_celery()
+    
     # 启动选定的服务
     print("\n" + "=" * 70)
     print("🎬 正在启动服务...")
@@ -554,4 +581,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
