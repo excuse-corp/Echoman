@@ -9,11 +9,11 @@ services:
       POSTGRES_USER: echoman
       POSTGRES_PASSWORD: echoman_password
       POSTGRES_DB: echoman
+      PGDATA: /var/lib/postgresql/data
     ports:
       - "5432:5432"
     volumes:
-      - postgres_data:/var/lib/postgresql/data
-      - ./scripts/init_db.sql:/docker-entrypoint-initdb.d/init_db.sql
+      - /var/lib/docker/volumes/backend_postgres_simple_data/_data:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U echoman"]
       interval: 10s
@@ -138,4 +138,3 @@ volumes:
 networks:
   echoman-network:
     driver: bridge
-

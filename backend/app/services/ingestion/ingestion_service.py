@@ -254,8 +254,10 @@ class IngestionService:
         # 计算时段标识（三周期归并模式）
         current_time = now_cn()
         date_str = current_time.strftime("%Y-%m-%d")
-        # 三周期划分：AM(8-12点), PM(14-18点), EVE(20-22点)
-        if current_time.hour < 14:
+        # 四周期划分：MORN(8点), AM(10/12点), PM(14/16/18点), EVE(20/22点)
+        if current_time.hour < 10:
+            period_type = "MORN"
+        elif current_time.hour < 14:
             period_type = "AM"
         elif current_time.hour < 20:
             period_type = "PM"
@@ -340,4 +342,3 @@ class IngestionService:
             })
         
         return statuses
-

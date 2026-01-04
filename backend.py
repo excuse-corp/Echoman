@@ -60,14 +60,21 @@ def check_port(port):
 def check_postgres():
     """检查 PostgreSQL 是否运行"""
     print("🔍 检查 PostgreSQL 连接...")
-    try:
-        result = activate_conda_and_run_command(
-            "python -c \"import psycopg2; conn = psycopg2.connect('dbname=echoman user=echoman password=echoman_password host=localhost'); conn.close(); print('OK')\"",
-            check=False
-        )
-        return result.returncode == 0
-    except:
-        return False
+    import time
+    max_retry = 10
+    for i in range(max_retry):
+        try:
+            result = activate_conda_and_run_command(
+                "python -c \"import psycopg2; conn = psycopg2.connect('dbname=echoman user=echoman password=echoman_password host=localhost'); conn.close(); print('OK')\"",
+                check=False
+            )
+            if result.returncode == 0:
+                return True
+        except Exception:
+            pass
+        if i < max_retry - 1:
+            time.sleep(3)
+    return False
 
 def check_redis():
     """检查 Redis 是否运行"""
@@ -113,12 +120,7 @@ def start_database_services():
 def install_dependencies(backend_dir):
     """安装 Python 依赖"""
     print("\n📦 检查 Python 依赖...")
-    
-    requirements_file = backend_dir / "requirements.txt"
-    if not requirements_file.exists():
-        print(f"❌ 错误: requirements.txt 不存在: {requirements_file}")
-        return False
-    
+
     # 检查是否需要安装依赖
     try:
         result = activate_conda_and_run_command(
@@ -133,6 +135,12 @@ def install_dependencies(backend_dir):
             print("📦 检测到依赖未完整安装，正在安装...")
     except:
         print("📦 正在安装依赖...")
+
+    requirements_file = backend_dir / "requirements.txt"
+    if not requirements_file.exists():
+        print(f"❌ 错误: requirements.txt 不存在: {requirements_file}")
+        print("💡 请先补充 requirements.txt，或在 conda echoman 环境中手动安装依赖")
+        return False
     
     try:
         activate_conda_and_run_command(f"pip install -r {requirements_file}")
@@ -218,14 +226,16 @@ def start_api_server(backend_dir: Path):
     """
     print("\n🚀 启动 FastAPI 服务器...")
     conda_sh = "/root/anaconda3/etc/profile.d/conda.sh"
-    command = f"source {conda_sh} && conda activate echoman && cd {backend_dir} && uvicorn app.main:app --reload --host 0.0.0.0 --port 8778"
+    # 在后台运行（如 start.sh/nohup）时，uvicorn --reload 可能导致子进程僵死/请求无响应；
+    # 这里默认不启用 reload，开发时可手动改为 `uvicorn ... --reload` 或直接运行 `python -m uvicorn`。
+    # 单 worker 在大查询时容易阻塞后续 /health 等请求，这里默认 2 个 worker
+    command = f"source {conda_sh} && conda activate echoman && cd {backend_dir} && uvicorn app.main:app --host 0.0.0.0 --port 8778 --workers 2"
     
+    # 直接继承父进程的 stdout/stderr，避免 PIPE 缓冲填满导致子进程阻塞
     proc = subprocess.Popen(
         command,
         shell=True,
         executable="/bin/bash",
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
         text=True,
         bufsize=1
     )

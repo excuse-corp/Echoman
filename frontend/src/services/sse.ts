@@ -4,7 +4,7 @@
  * 用于与后端API进行实时流式对话
  */
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8778/api/v1";
+import { API_BASE_URL } from "./config";
 
 export interface SSETokenEvent {
   type: "token";
@@ -216,4 +216,3 @@ export async function askStream(
     ...callbacks,
   });
 }
-

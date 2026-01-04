@@ -60,7 +60,17 @@ app.conf.update(
         
     # ========== 归并任务（3次/天：上午、下午、傍晚） ==========
 
-    # 上午归并 (处理 AM 时段数据: 8:00, 10:00, 12:00)
+    # 早间归并 (处理 MORN 时段数据: 8:00)
+    "halfday-merge-morn": {
+        "task": "app.tasks.merge_tasks.halfday_merge",
+        "schedule": crontab(hour=8, minute=5),
+    },
+    "global-merge-morn": {
+        "task": "app.tasks.merge_tasks.global_merge",
+        "schedule": crontab(hour=8, minute=20),
+    },
+
+    # 上午归并 (处理 AM 时段数据: 10:00, 12:00)
     "halfday-merge-am": {
         "task": "app.tasks.merge_tasks.halfday_merge",
         "schedule": crontab(hour=12, minute=5),  # 提前10分钟：12:05
@@ -106,4 +116,3 @@ app.autodiscover_tasks()
 
 if __name__ == "__main__":
     app.start()
-

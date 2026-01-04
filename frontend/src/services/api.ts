@@ -1,9 +1,6 @@
 import type { CategoryEchoStat, HotspotSummary, TimelineNode, TopicDetail, ChatResponse, ChatStreamEvent } from "../types";
 import { ENABLED_PLATFORMS } from "../constants/platforms";
-
-// API基础URL，后端使用 /api/v1 前缀
-// 优先使用环境变量，否则使用服务器IP（支持远程访问）
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "http://202.114.234.85:8778/api/v1";
+import { API_BASE_URL } from "./config";
 
 const now = new Date();
 const hours = (n: number) => 1000 * 60 * 60 * n;
@@ -82,22 +79,25 @@ const fallbackHotspots: HotspotSummary[] = [
 
 const fallbackCategoryStats: CategoryEchoStat[] = [
   {
-    category: "\u5a31\u4e50\u516b\u5366\u7c7b\u4e8b\u4ef6",
+    category: "entertainment",
     avg_length_hours: 76,
     max_length_hours: 152,
     min_length_hours: 36,
+    topics_count: 0,
   },
   {
-    category: "\u793e\u4f1a\u5b9e\u4e8b\u7c7b\u4e8b\u4ef6",
+    category: "current_affairs",
     avg_length_hours: 102,
     max_length_hours: 176,
     min_length_hours: 52,
+    topics_count: 0,
   },
   {
-    category: "\u4f53\u80b2\u7535\u7ade\u7c7b\u4e8b\u4ef6",
+    category: "sports_esports",
     avg_length_hours: 66,
     max_length_hours: 120,
     min_length_hours: 24,
+    topics_count: 0,
   },
 ];
 

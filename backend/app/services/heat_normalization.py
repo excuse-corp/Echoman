@@ -144,12 +144,13 @@ class HeatNormalizationService:
             dt: 时间（默认为当前时间）
             
         Returns:
-            时段标识（如 "2025-11-07_AM", "2025-11-07_PM", "2025-11-07_EVE"）
+            时段标识（如 "2025-11-07_MORN/AM/PM/EVE"）
             
         周期划分：
-        - AM: 8:00-12:00 的采集（3次）→ 12:15归并
-        - PM: 14:00-18:00 的采集（3次）→ 18:15归并
-        - EVE: 20:00-22:00 的采集（2次）→ 22:15归并
+        - MORN: 08:00 采集 → 08:05/08:20 归并
+        - AM: 10:00, 12:00 采集 → 12:05/12:20 归并
+        - PM: 14:00, 16:00, 18:00 采集 → 18:05/18:20 归并
+        - EVE: 20:00, 22:00 采集 → 22:05/22:20 归并
         """
         if dt is None:
             dt = now_cn()
@@ -157,7 +158,9 @@ class HeatNormalizationService:
         date_str = dt.strftime("%Y-%m-%d")
         
         # 根据时间确定归并周期
-        if dt.hour < 14:
+        if dt.hour < 10:
+            period = "MORN"
+        elif dt.hour < 14:
             period = "AM"
         elif dt.hour < 20:
             period = "PM"
@@ -215,4 +218,3 @@ class HeatNormalizationService:
                 )
         
         return platform_stats
-
