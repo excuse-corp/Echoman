@@ -265,8 +265,6 @@ def start_celery_worker(backend_dir: Path):
         command,
         shell=True,
         executable="/bin/bash",
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
         text=True,
         bufsize=1
     )
@@ -295,8 +293,6 @@ def start_celery_beat(backend_dir: Path):
         command,
         shell=True,
         executable="/bin/bash",
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
         text=True,
         bufsize=1
     )

@@ -50,22 +50,27 @@ function formatRelativeDate(timestamp: string): string {
 
 function formatEchoLength(hours: number): string {
   if (!Number.isFinite(hours) || hours < 0) return "—";
-  
+
   const totalHours = Math.round(hours);
-  
+
+  // 0 或极短时长，统一提示
+  if (totalHours <= 0) {
+    return "低于2小时";
+  }
+
   // 不超过1天（24小时），只显示小时
   if (totalHours < 24) {
     return `${totalHours}小时`;
   }
-  
+
   // 超过1天，显示"x天x小时"
   const days = Math.floor(totalHours / 24);
   const remainingHours = totalHours % 24;
-  
+
   if (remainingHours === 0) {
     return `${days}天`;
   }
-  
+
   return `${days}天${remainingHours}小时`;
 }
 

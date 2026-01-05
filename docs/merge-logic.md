@@ -1,13 +1,14 @@
 # Echoman 归并逻辑（最新）
 
 ## 整体框架
-- **每日三次**：12:05 / 18:05 / 22:05 触发阶段一；12:20 / 18:20 / 22:20 触发阶段二。
+- **每日四个时段**：08:05 / 12:05 / 18:05 / 22:05 触发阶段一；08:20 / 12:20 / 18:20 / 22:20 触发阶段二。
 - **两阶段**：
   1. **阶段一：新事件归并（halfday_merge/event_merge）** —— 去噪与合并当期重复新闻，输出 `pending_global_merge`。
   2. **阶段二：整体归并（global_merge）** —— 与历史 Topic 库比对，决定并入旧 Topic 或创建新 Topic，并更新摘要、分类、热度。
 
 ## 阶段一：新事件归并（去噪）
 - **输入**：同一归并周期内采集到的 `source_items`，`merge_status=pending_event_merge`。
+- **周期命名**：按采集小时切分 period：`<10 → MORN`，`<14 → AM`，`<18 → PM`，其余 `EVE`。
 - **预处理**：标题标准化（全角转半角、去标点、数字归一化、小写）。
 - **向量化**：标题+摘要 → Embedding（Chroma `source_item_<id>` 持久化）。
 - **聚类**：
@@ -28,8 +29,8 @@
 - LLM 置信度：`decision=merge` 且 `confidence ≥ 0.75` 才并入旧 Topic。
 - 批量上限：每轮最多处理 **200** 个事件组。
 - Token 控制：prompt≈2500，候选摘要截断 200，completion 300。
-- 向量库：纯 **Chroma**，集合 `echoman_embeddings`，对象类型 `source_item` / `topic_summary`。
-- 新建 Topic 热度截断：`GLOBAL_MERGE_NEW_TOPIC_KEEP_RATIO`（默认 1.0）。若设为 0.5，则按当前热度保留前 50%，其余直接下线（status=ended），不做二次归一化。
+- 向量库：纯 **Chroma**，集合 `echoman_embeddings`，对象类型 `source_item` / `topic_summary`（已弃用 pgvector）。
+- 新建 Topic 热度截断：`GLOBAL_MERGE_NEW_TOPIC_KEEP_RATIO`（默认 1.0，当前配置 0.5）。若设为 0.5，则按当前热度保留前 50%，其余直接下线（status=ended），不做二次归一化。
 
 ### 流程
 1. **代表项**：每组取一条代表 item（标题+摘要）。
@@ -59,11 +60,13 @@
 - 运行日志：`runs_pipeline`。
 
 ## 近期改动要点
+- 新增晨间归并时段：08:05（阶段一）/08:20（阶段二），period=MORN。  
 - 阶段二候选时间窗由 7 天扩至 **180 天**；候选数量固定 **Top-K=3**。  
 - 新建/合并时**同步写占位摘要+向量**，防止同一轮出现重复 Topic。  
 - 新建 Topic 热度截断：`GLOBAL_MERGE_NEW_TOPIC_KEEP_RATIO` 支持按热度比例保留（默认 1.0，现配置 0.5）；被截断的 Topic 直接 `ended`，热度清零，不二次归一化。  
 - 纯 Chroma 模式（不再使用 pgvector）；摘要向量作为主要召回索引。  
+- 晨间首轮因采集时间高度集中，部分 Topic 的 `length_hours` 可能接近 0，属正常；前端可显示为“低于2小时”以避免 0 时长的视觉噪声。  
 
 ## 前端关注点
-- 归并完成时间：12:20 / 18:20 / 22:20；前端可通过 `system_config.last_merge_time` 或最新 Topics 的 `updated_at` 变化检测刷新。  
+- 归并完成时间：08:20 / 12:20 / 18:20 / 22:20；前端可通过 `system_config.last_merge_time` 或最新 Topics 的 `updated_at` 变化检测刷新。  
 - 热度、分类、摘要在阶段二完成后保证一致性。  
