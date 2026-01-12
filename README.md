@@ -1,280 +1,159 @@
 # Echoman - 热点事件聚合与回声追踪系统
 
-> 一个智能的多平台热点事件聚合系统，追踪事件的传播和演化轨迹
+Echoman 是一个“多平台热点 → 归并为话题 → 追踪传播回声 → 支持 RAG 问答”的全栈项目，包含：
+- 后端：FastAPI + Celery + PostgreSQL/pgvector +（可选）Chroma 向量检索
+- 前端：React + Vite（内置对后端的 `/api/v1` 代理，支持 SSE 流式对话）
 
-## 🎯 项目简介
+## 功能概览
 
-Echoman 是一个热点事件聚合与回声追踪系统，通过采集多个平台的热点数据，进行智能归并和分析，追踪事件的传播和演化轨迹。
+- **多平台热点采集（7个平台）**：`weibo / zhihu / toutiao / sina / netease / baidu / hupu`
+- **两层归并**：半日归并（向量/相似度聚类 + LLM 判定）→ 全局归并（话题合并/新建）
+- **回声指标**：回声长度（话题持续时间）、强度等统计指标（前端用于排序/展示）
+- **分类与指标**：三分类（娱乐/社会时事/体育电竞）+ 分类聚合统计
+- **RAG 对话**：`topic/global` 双模式，支持 **SSE 流式输出**
+- **监控接口**：健康检查、Prometheus 指标（见下方 API）
 
-### 核心特性
-
-- **多平台采集**: 微博、知乎、今日头条、新浪新闻、网易新闻、百度热搜、虎扑
-- **智能归并**: 两层归并机制（半日归并 + 整体归并）
-- **热度追踪**: 归一化热度计算，追踪事件热度变化
-- **回声指标**: 强度（Intensity）、长度（Length）、热度趋势
-- **LLM 驱动**: 使用 Qwen3-32B 进行事件关联判定
-- **RAG 对话**: 基于检索增强的事件问答系统（双模式：事件模式/自由模式）
-- **现代化UI**: 玻璃拟态设计、完整暗色/亮色主题、流畅动画效果
-- **智能交互**: SSE流式对话、自动刷新、Enter发送、时间线紧凑展示
-
-## 🚀 快速启动
+## 快速启动（本机开发）
 
 ### 前置要求
 
-- Python 3.11+ (conda echoman 环境)
+- Python 3.11+（项目脚本默认使用 `conda` 环境名 `echoman`）
 - Node.js 18+
-- **数据库（二选一）**:
-  - 选项1: Docker & Docker Compose（快速开始）
-  - 选项2: 本地 PostgreSQL 15+ 和 Redis 6+（完全控制）
-  - 📖 [如何选择？查看对比](./backend/DATABASE_OPTIONS.md)
-  - 📖 [本地数据库安装指南](./backend/INSTALL_LOCAL_DATABASE.md)
+- Docker + Docker Compose（用于一键启动 PostgreSQL/Redis；也可手动本地安装）
 
-### 一键启动
+### 1) 配置后端环境变量
 
-#### 1. 启动后端
+后端运行时读取 `backend/.env`（见 `backend/env.template`）。
 
 ```bash
-# 在项目根目录运行（后台一键启动 API + Worker + Beat + 数据库）
-./start.sh
-
-# 或需前台查看日志/自定义组合：
-python backend.py --all --db --restart-celery
+cp backend/env.template backend/.env
 ```
 
-首次运行会自动：
-- 启动 PostgreSQL 和 Redis（使用 Docker，需已安装 docker-compose）
-- 安装 Python 依赖
-- 初始化数据库表结构
-- 启动 FastAPI 服务器（端口 8778）
+最少需要确认：
+- `DB_*`（默认 `echoman / echoman_password / echoman`）
+- `LLM_PROVIDER` 与对应的 `*_API_KEY`/`*_BASE_URL`
+- `VECTOR_DB_TYPE`（默认 `chroma`，使用本地持久化目录 `backend/data/chroma/`）
 
-停止所有后端服务：
+### 2) 启动后端（API + Worker + Beat + DB）
+
+推荐一键脚本（后台运行，日志写入 `backend_services.log`）：
+
+```bash
+./start.sh
+```
+
+停止：
 
 ```bash
 ./stop.sh
 ```
 
-#### 2. 启动前端
+或前台精细控制：
 
 ```bash
-# 在新终端窗口运行
+python backend.py --all --db --restart-celery
+```
+
+后端默认端口：`8778`
+
+### 3) 启动前端
+
+```bash
 python frontend.py
 ```
 
-首次运行会自动：
-- 安装 npm 依赖
-- 启动开发服务器（端口 5173）
+前端默认端口：`5173`
 
-### 访问应用
+### 4) 访问
 
-- **前端界面**: http://localhost:5173
-- **后端 API**: http://localhost:8778/docs
+- 前端：http://localhost:5173
+- 后端 Swagger：http://localhost:8778/docs
+- 后端健康检查：http://localhost:8778/health
 
-## 📚 文档导航
+## API（常用）
 
-- **[快速启动指南](./HOW_TO_START.md)** - 完整的启动步骤和常见问题
-- **[后端快速启动](./backend/backend_quickstart.md)** - 后端详细启动说明
-- **[后端完整文档](./backend/BACKEND_README.md)** - 后端架构和功能说明
-- **[项目状态](./backend/PROJECT_STATUS.md)** - 当前实现进度和待办事项
-- **[API 规范](./docs/api-spec.md)** - API 接口文档
-- **[方案设计](./docs/backend-solution.md)** - 系统设计方案
-- **[服务端口与路径一览](./docs/service-map.md)** - 各服务启动命令、端口汇总
+> 路径前缀为 `/api/v1`（由后端配置 `api_v1_prefix` 决定）。
 
-## 📊 项目状态
+- 采集
+  - `POST /api/v1/ingest/run`：手动触发采集（platforms/limit）
+  - `GET /api/v1/ingest/runs`：采集历史
+  - `GET /api/v1/ingest/sources/status`：平台连接器状态
+- 话题
+  - `GET /api/v1/topics`：话题列表（支持筛选/排序/分页）
+  - `GET /api/v1/topics/today`：当日话题
+  - `GET /api/v1/topics/{topic_id}`：话题详情
+  - `GET /api/v1/topics/{topic_id}/timeline`：时间线
+- 对话（RAG）
+  - `POST /api/v1/chat/ask`：问答（`stream=true` 时返回 SSE 事件流）
+  - `POST /api/v1/chat/create`：创建会话
+- 分类与指标
+  - `GET /api/v1/categories`：分类列表
+  - `GET /api/v1/categories/metrics/summary`：分类统计摘要
+- 监控
+  - `GET /api/v1/monitoring/monitoring/health`
+  - `GET /api/v1/monitoring/monitoring/metrics`
 
-### ✅ 项目整体进度（90%）🚀
-**核心后端功能已100%完成，前端核心页面已完成（85%）**
+> 说明：当前 `monitoring` 路由在代码中同时设置了 include 前缀与 router 前缀，因此实际路径为 `.../monitoring/monitoring/...`。
 
-**阶段1: 数据获取与存储** - 已完成！✅
+## 运行脚本与日志
 
-- [x] 完整的项目架构
-- [x] 7个平台爬虫集成
-- [x] 数据库模型设计与实现（10个核心表）
-- [x] FastAPI 完整接口
-- [x] 采集服务与运行追踪
-- [x] **热度归一化服务**（Min-Max + 平台权重）✨
-- [x] **半日归并逻辑**（向量聚类 + LLM判定）✨
-- [x] **整体归并逻辑**（Topic创建与归并）✨
-- [x] **LLM Provider 抽象层**（Qwen/OpenAI/Azure）✨
-- [x] **完整的Celery任务调度**（采集+归并）✨
-- [x] Docker 部署配置
-- [x] 源码启动脚本（backend.py）
-- [x] 完整文档体系
+- `start.sh`：后台启动 `python backend.py --all --db --restart-celery`，日志 `backend_services.log`，PID `backend_services.pid`
+- `stop.sh`：尝试停止 uvicorn/celery，并可选停止 `backend/docker-compose.yml` 中的数据库容器
+- `backend.py`：后端服务管理器（API/Worker/Beat 任意组合）
+- `frontend.py`：前端开发服务器启动器（缺依赖时自动 `npm install`）
 
-**阶段2: AI 处理** - 已完成！✅
+## 技术栈（按仓库代码实际使用）
 
-- [x] LLM Provider 集成（Qwen/OpenAI/Azure）✨
-- [x] 向量检索服务（pgvector + embedding）✨
-- [x] 事件归并判定（LLM智能判定）✨
-- [x] **事件分类服务（三分类：娱乐/时事/体育）**✨
-- [x] **摘要生成服务（增量摘要）**✨
-- [x] **RAG 对话系统（topic/global模式）**✨
+- 后端：FastAPI、SQLAlchemy（async）、Celery、PostgreSQL（pgvector）、Redis、Chroma（`chromadb.PersistentClient`）
+- 前端：React、React Router、Vite、TypeScript（无 UI 组件库，原生 CSS）
 
-### ✅ 增强功能（已完成）
-
-- [x] **RAG 对话系统（topic模式 + global模式）**✨
-- [x] **事件自动分类（娱乐/时事/体育三分类）**✨
-- [x] **增量摘要生成**✨
-- [x] **Chroma 向量数据库（支持 4096 维向量，突破 pgvector 维度限制）**✨
-- [x] **向量检索优化（Chroma HNSW 索引 + 高维向量支持）**✨
-- [x] **监控与告警系统（Prometheus + Grafana）**✨
-
-📖 **详细进度**: 查看 [实现完成报告](./backend/IMPLEMENTATION_COMPLETE.md)
-
-## 🛠️ 技术栈
-
-### 后端
-
-- **框架**: FastAPI + uvicorn
-- **数据库**: PostgreSQL 15 + pgvector
-- **向量数据库**: Chroma 1.3.0（支持 4096 维向量，无维度限制）
-- **缓存**: Redis 6
-- **任务队列**: Celery + Beat
-- **ORM**: SQLAlchemy (async)
-- **爬虫**: httpx + BeautifulSoup4
-- **AI**: LangChain (已集成) + OpenAI SDK (Qwen/OpenAI/Azure)
-- **Embedding**: 支持 Qwen3-Embedding-8B (4096维) / text-embedding-3-large 等高维模型
-
-### 前端
-
-- **框架**: React 18.3 + Vite 5.2 + TypeScript 5.5
-- **路由**: React Router v6.26
-- **UI**: 零依赖原生CSS实现（轻量级）
-- **设计系统**: 玻璃拟态（Glassmorphism）+ 现代渐变
-- **主题**: 完整的暗色/亮色模式系统
-- **交互**: SSE流式对话 + 自动滚动 + Enter发送
-- **开发状态**: 核心页面和组件已完成（85%）✨
-- **特色**: Fallback机制 + 优雅降级 + 紧凑优化设计
-
-## 📦 项目结构
+## 项目结构
 
 ```
 Echoman/
-├── backend.py              # 后端启动脚本 ✨
-├── frontend.py             # 前端启动脚本 ✨
-├── HOW_TO_START.md         # 启动指南 ✨
-├── backend/                # 后端代码
-│   ├── app/                # FastAPI 应用
-│   │   ├── api/            # API 路由
-│   │   ├── models/         # 数据库模型
-│   │   ├── services/       # 业务逻辑
-│   │   ├── tasks/          # Celery 任务
-│   │   ├── schemas/        # Pydantic 模型
-│   │   ├── config/         # 配置管理
-│   │   └── main.py         # 应用入口
-│   ├── scrapers/           # 爬虫模块
-│   ├── scripts/            # 工具脚本
-│   ├── requirements.txt    # Python 依赖
-│   └── docker-compose.yml
-├── frontend/               # 前端代码
-└── docs/                   # 文档
-    ├── api-spec.md           # API 规范
-    └── backend-solution.md   # 方案设计
+├── backend.py
+├── frontend.py
+├── start.sh
+├── stop.sh
+├── HOW_TO_START.md
+├── backend/
+│   ├── app/                 # FastAPI 应用（api/models/services/tasks...）
+│   ├── scrapers/            # 7个平台热点爬虫
+│   ├── scripts/             # 初始化与批处理脚本
+│   ├── docker-compose.yml   # PostgreSQL/Redis +（可选）服务编排
+│   ├── env.template         # 后端环境变量模板
+│   └── data/                # 本地数据（含 chroma 持久化目录）
+├── frontend/
+│   ├── src/
+│   ├── vite.config.ts       # dev server proxy: /api/v1 -> 8778
+│   └── .env.development
+└── docs/
+    ├── api-spec.md
+    ├── backend-solution.md
+    ├── merge-logic.md
+    ├── ECHO_METRICS_CALCULATION.md
+    └── 数据流转架构.md
 ```
 
-## 🧪 测试 API
+## 文档导航
 
-### 使用 curl
+- `HOW_TO_START.md`：启动指南（含脚本说明与常见问题）
+- `docs/service-map.md`：端口与服务一览（如有出入，以代码/脚本为准）
+- `docs/merge-logic.md`：归并逻辑说明
+- `docs/ECHO_METRICS_CALCULATION.md`：回声指标计算说明
+- `docs/api-spec.md`：API 规范（更偏文档化描述）
 
-```bash
-# 触发采集
-curl -X POST "http://localhost:8778/api/v1/ingest/run" \
-  -H "Content-Type: application/json" \
-  -d '{"platforms": ["weibo", "zhihu"], "limit": 10}'
+## 注意事项（务必读）
 
-# 查看采集历史
-curl "http://localhost:8778/api/v1/ingest/runs"
+- **依赖清单缺失**：仓库当前未包含 `backend/requirements.txt`，因此 `backend/Dockerfile` 与 `backend.py` 的“自动安装依赖”步骤在全新环境中会失败。若需 Docker 化或从零安装，请先补齐依赖清单，或在 `conda echoman` 环境中手动安装项目依赖后再启动。
+- **脚本强依赖 conda 路径**：`backend.py`/`frontend.py` 默认 `source /root/anaconda3/etc/profile.d/conda.sh && conda activate echoman`；如你的 conda 安装路径或环境名不同，请按实际修改。
+- **前端有 fallback 数据**：当前前端在请求后端失败时会回退到内置示例数据（用于 UI 演示与开发），排查时请以浏览器 Network 与后端 `/docs` 为准。
+- **不要提交密钥**：请将 `backend/.env` 视为本地配置文件，避免提交包含 API Key 的版本。
 
-# 查看话题列表
-curl "http://localhost:8778/api/v1/topics?page=1&size=20"
+## 贡献
 
-# 查看平台状态
-curl "http://localhost:8778/api/v1/ingest/sources/status"
-```
+欢迎提交 Issue / PR（建议同时更新相关 `docs/` 与接口说明）。
 
-### 使用 API 文档
+## 许可证
 
-访问 http://localhost:8778/docs 使用交互式 API 文档。
-
-## 🔧 高级功能
-
-### 启动 Celery Worker（定时任务）
-
-```bash
-cd backend
-conda activate echoman
-celery -A app.tasks.celery_app worker --loglevel=info
-```
-
-### 启动 Celery Beat（任务调度）
-
-```bash
-cd backend
-conda activate echoman
-celery -A app.tasks.celery_app beat --loglevel=info
-```
-
-### 监控 Celery 任务
-
-```bash
-cd backend
-conda activate echoman
-celery -A app.tasks.celery_app flower --port=5555
-```
-
-访问 http://localhost:5555
-
-## 📈 开发路线图
-
-### 阶段 1: 数据获取与存储（100% 完成）✅
-
-- [x] 多平台爬虫集成（7个平台）
-- [x] 数据库模型设计（10个核心表）
-- [x] 采集服务实现（Celery定时任务）
-- [x] 基础 API 接口（FastAPI REST）
-- [x] 热度归一化（Min-Max + 平台权重）
-- [x] 归并逻辑（半日归并 + 整体归并）
-
-### 阶段 2: AI 处理与对话（100% 完成）✅
-
-- [x] LLM Provider 集成（Qwen/OpenAI/Azure）
-- [x] 向量检索服务（pgvector + embedding）
-- [x] 事件归并判定（向量聚类 + LLM判定）
-- [x] **事件分类（娱乐/时事/体育三分类）**✨
-- [x] **摘要生成（增量摘要生成）**✨
-- [x] **RAG 对话系统（topic/global模式）**✨
-
-### 阶段 3: 前端与可视化（85% 完成）🚧
-
-- [x] 基础页面结构（首页 + 探索页）✨
-- [x] 品牌首页完整实现（回声指标+分类统计）✨
-- [x] 事件列表与详情展示✨
-- [x] 时间线展示组件（紧凑优化设计）✨
-- [x] AI对话界面（ConversationConsole双模式）✨
-- [x] 智能对话系统（SSE流式响应 + 自动滚动）✨
-- [x] 对话交互优化（Enter发送、刷新重置、事件模式专注）✨
-- [x] 主题切换（完整的暗色/亮色模式系统）✨
-- [x] UI/UX全面优化（玻璃拟态、紧凑布局、视觉统一）✨
-- [x] API服务封装（含Fallback机制）✨
-- [x] 零UI库依赖（原生CSS实现）✨
-- [ ] 后端API集成完善（当前使用Fallback数据）
-- [ ] 图表可视化（Recharts/ECharts集成）
-- [ ] 响应式设计增强
-- [ ] 管理后台界面
-
-## 🤝 贡献指南
-
-欢迎提交 Issue 和 Pull Request！
-
-## 📄 许可证
-
-MIT License
-
-## 📧 联系方式
-
-如有问题或建议，请提交 Issue。
-
----
-
-**提示**: 首次启动可能需要几分钟时间下载依赖和初始化数据库，请耐心等待。
-
-**开始使用**: 运行 `python backend.py` 和 `python frontend.py` 即可启动整个系统！
+MIT
