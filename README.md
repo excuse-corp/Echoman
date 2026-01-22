@@ -1,13 +1,15 @@
 # Echoman - 热点事件聚合与回声追踪系统
 
 Echoman 是一个“多平台热点 → 归并为话题 → 追踪传播回声 → 支持 RAG 问答”的全栈项目，包含：
-- 后端：FastAPI + Celery + PostgreSQL/pgvector +（可选）Chroma 向量检索
+- 后端：FastAPI + Celery + PostgreSQL + **Chroma 向量检索（现网口径）**
 - 前端：React + Vite（内置对后端的 `/api/v1` 代理，支持 SSE 流式对话）
 
 ## 功能概览
 
 - **多平台热点采集（7个平台）**：`weibo / zhihu / toutiao / sina / netease / baidu / hupu`
-- **两层归并**：半日归并（向量/相似度聚类 + LLM 判定）→ 全局归并（话题合并/新建）
+- **两层归并**：阶段一归并（向量/相似度聚类 + LLM 判定）→ 阶段二归并（话题合并/新建）
+- **四个归并时段**：MORN/AM/PM/EVE（08:05/12:05/18:05/22:05 触发阶段一；08:20/12:20/18:20/22:20 触发阶段二）
+- **采集噪音过滤**：拦截误操作条目（如“点击查看更多实时热点”及热榜列表页链接）
 - **回声指标**：回声长度（话题持续时间）、强度等统计指标（前端用于排序/展示）
 - **分类与指标**：三分类（娱乐/社会时事/体育电竞）+ 分类聚合统计
 - **RAG 对话**：`topic/global` 双模式，支持 **SSE 流式输出**
@@ -104,7 +106,7 @@ python frontend.py
 
 ## 技术栈（按仓库代码实际使用）
 
-- 后端：FastAPI、SQLAlchemy（async）、Celery、PostgreSQL（pgvector）、Redis、Chroma（`chromadb.PersistentClient`）
+- 后端：FastAPI、SQLAlchemy（async）、Celery、PostgreSQL、Redis、Chroma（`chromadb.PersistentClient`）
 - 前端：React、React Router、Vite、TypeScript（无 UI 组件库，原生 CSS）
 
 ## 项目结构
@@ -149,6 +151,7 @@ Echoman/
 - **脚本强依赖 conda 路径**：`backend.py`/`frontend.py` 默认 `source /root/anaconda3/etc/profile.d/conda.sh && conda activate echoman`；如你的 conda 安装路径或环境名不同，请按实际修改。
 - **前端有 fallback 数据**：当前前端在请求后端失败时会回退到内置示例数据（用于 UI 演示与开发），排查时请以浏览器 Network 与后端 `/docs` 为准。
 - **不要提交密钥**：请将 `backend/.env` 视为本地配置文件，避免提交包含 API Key 的版本。
+  - **Celery Beat 调度文件**：`backend/celerybeat-schedule.*` 为调度持久化文件，可删除重建；不要手改。
 
 ## 贡献
 

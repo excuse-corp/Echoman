@@ -74,7 +74,7 @@ python frontend.py
 
 3. **安装依赖**
    - 检查是否已安装 FastAPI、SQLAlchemy、Celery 等核心依赖
-   - 如果未安装，自动执行 `pip install -r requirements.txt`
+   - 仓库当前不含 `backend/requirements.txt`，需自行在 conda 环境中安装依赖
 
 4. **初始化数据库**
    - 创建 pgvector 扩展
@@ -163,6 +163,53 @@ python scripts/init_tables.py recreate
 
 📖 **详细文档**: [Chroma 向量数据库配置](./docs/CHROMA_VECTOR_DATABASE.md)
 
+## LLM 配置（必读）
+
+后端会同时使用 **对话模型** 和 **Embedding 模型**。所有配置都写在 `backend/.env`（可从 `backend/env.template` 复制）。
+
+核心变量：
+- `LLM_PROVIDER`：`qwen` | `openai` | `azure` | `openai_compatible`
+- `LLM_MAX_TOKENS` / `LLM_TEMPERATURE` / `LLM_TIMEOUT_SECONDS`：通用推理参数
+
+### 方案 A：Qwen（默认）
+```
+LLM_PROVIDER=qwen
+QWEN_MODEL=qwen3-32b
+QWEN_EMBEDDING_MODEL=Qwen3-Embedding-8B
+QWEN_API_BASE=http://localhost:8000/v1
+QWEN_API_KEY=sk-xxx
+```
+
+### 方案 B：OpenAI
+```
+LLM_PROVIDER=openai
+OPENAI_API_KEY=sk-xxx
+OPENAI_MODEL=gpt-4o-mini
+OPENAI_EMBEDDING_MODEL=text-embedding-3-large
+```
+
+### 方案 C：Azure OpenAI
+```
+LLM_PROVIDER=azure
+AZURE_OPENAI_API_KEY=xxx
+AZURE_OPENAI_ENDPOINT=https://<resource>.openai.azure.com
+AZURE_OPENAI_API_VERSION=2024-02-15-preview
+AZURE_DEPLOYMENT_NAME=<your-deployment>
+```
+
+### 方案 D：OpenAI Compatible（Ollama / vLLM / LM Studio）
+```
+LLM_PROVIDER=openai_compatible
+OPENAI_COMPATIBLE_BASE_URL=http://localhost:11434/v1
+OPENAI_COMPATIBLE_API_KEY=not-needed
+OPENAI_COMPATIBLE_MODEL=llama3
+OPENAI_COMPATIBLE_EMBEDDING_MODEL=nomic-embed-text
+```
+
+说明：
+- Embedding 可以单独配置地址与密钥：`OPENAI_COMPATIBLE_EMBEDDING_BASE_URL`、`OPENAI_COMPATIBLE_EMBEDDING_API_KEY`
+- 若 Embedding 不配置，会复用对话模型的 base_url / api_key
+
 ### 查看数据库
 
 ```bash
@@ -219,17 +266,21 @@ curl "http://localhost:8778/api/v1/topics?page=1&size=20"
 | 时间 | 任务 | 说明 |
 |------|------|------|
 | 08:00 | 采集任务 | 采集所有平台热榜 |
+| 08:05 | MORN 归并 | 归并 08:00 数据 |
+| 08:20 | MORN 整体归并 | 与历史话题比对 |
 | 10:00 | 采集任务 | 采集所有平台热榜 |
 | 12:00 | 采集任务 | 采集所有平台热榜 |
-| 12:15 | 上半日归并 | 归并上午数据 |
-| 12:30 | 整体归并 | 全局归并 |
+| 12:05 | AM 归并 | 归并 10:00/12:00 数据 |
+| 12:20 | AM 整体归并 | 与历史话题比对 |
 | 14:00 | 采集任务 | 采集所有平台热榜 |
 | 16:00 | 采集任务 | 采集所有平台热榜 |
 | 18:00 | 采集任务 | 采集所有平台热榜 |
+| 18:05 | PM 归并 | 归并 14:00/16:00/18:00 数据 |
+| 18:20 | PM 整体归并 | 与历史话题比对 |
 | 20:00 | 采集任务 | 采集所有平台热榜 |
 | 22:00 | 采集任务 | 采集所有平台热榜 |
-| 22:15 | 下半日归并 | 归并下午数据 |
-| 22:30 | 整体归并 | 全局归并 |
+| 22:05 | EVE 归并 | 归并 20:00/22:00 数据 |
+| 22:20 | EVE 整体归并 | 与历史话题比对 |
 
 **每次采集各平台热榜前 30 条数据**
 
@@ -306,7 +357,8 @@ pip install --upgrade pip
 
 # 清理缓存并重新安装
 pip cache purge
-pip install -r backend/requirements.txt
+# 仓库未提供 requirements.txt，请按实际依赖安装
+# 例如：pip install fastapi sqlalchemy celery redis chromadb ...
 ```
 
 ### Q4: 前端启动失败
@@ -357,7 +409,6 @@ Echoman/
 │   ├── app/               # FastAPI 应用
 │   ├── scrapers/          # 爬虫模块
 │   ├── scripts/           # 工具脚本
-│   ├── requirements.txt   # Python 依赖
 │   ├── docker-compose.yml # Docker 配置
 │   ├── backend_quickstart.md     # 详细启动指南
 │   └── PROJECT_STATUS.md # 项目状态
