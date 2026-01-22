@@ -16,8 +16,8 @@ class TopicResponse(BaseModel):
     category: Optional[str] = Field(None, description="分类")
     intensity_total: int = Field(..., description="强度总量")
     interaction_total: Optional[int] = Field(None, description="互动总量")
-    current_heat_normalized: Optional[float] = Field(None, description="当前归一化热度")
-    heat_percentage: Optional[float] = Field(None, description="当前热度占比")
+    current_heat_normalized: Optional[float] = Field(None, description="归一化热度峰值（跨归并周期）")
+    heat_percentage: Optional[float] = Field(None, description="热度占比峰值（%）")
     
     class Config:
         from_attributes = True
@@ -86,4 +86,3 @@ class TopicHeatTrendResponse(BaseModel):
     """话题热度趋势响应"""
     topic_id: int = Field(..., description="话题ID")
     items: List[HeatTrendItem] = Field(..., description="热度趋势列表")
-

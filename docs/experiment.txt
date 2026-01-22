@@ -61,7 +61,7 @@ Providers (LLM/Embedding)
 
 Notes
 - 向量检索：纯 Chroma，召回 Top-K=3，候选时间窗 180 天；新建/合并时写占位摘要向量。
-- 新建 Topic 热度截断：`GLOBAL_MERGE_NEW_TOPIC_KEEP_RATIO`（当前 0.5，默认 1.0）；截断不二次归一化，被截断的 Topic 直接 ended。
+- 新建 Topic 热度截断：`GLOBAL_MERGE_NEW_TOPIC_KEEP_RATIO`（当前 1.0，默认 1.0）；当前不截断，全部保留。
 - Schedule ingestion: 8:00-22:00, every 2 hours (8 times/day).
 - Schedule merge: 3 times/day, 12:05+12:20 (AM), 18:05+18:20 (PM), 22:05+22:20 (EVE).
 - Period format: Halfday (e.g., 2025-12-30_PM).

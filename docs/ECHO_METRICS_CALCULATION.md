@@ -2,12 +2,14 @@
 
 ## 概述
 
-> 运行口径提示（2025-12-30）：阶段二对“本次新建的 Topic”按热度保留比例 `GLOBAL_MERGE_NEW_TOPIC_KEEP_RATIO`（当前 0.5）做截断，被下线的 Topic 热度清零且不二次归一化，总热度和会降低；如需报表对齐，请在展示端注明。
+> 运行口径提示（2026-01-22）：阶段二对“本次新建的 Topic”按热度保留比例 `GLOBAL_MERGE_NEW_TOPIC_KEEP_RATIO` 进行截断；当前已设置为 1.0（不截断，保留全部），被下线逻辑不生效；如需报表对齐，请在展示端注明。
 
 Echoman 系统使用两个核心指标来衡量热点事件的影响力：
 
 - **回声长度**：事件的持续时间（从首次出现到最后活跃）
-- **回声强度**：事件的热度强度（归一化后的相对热度值）
+- **回声强度**：事件在**多个归并周期中取峰值**的归一化热度（0-1）
+
+> 备注：列表接口同时返回 `intensity_raw`（Topic 累计节点数）与 `intensity_norm`（Topic 历史峰值热度）。
 
 ---
 
@@ -29,7 +31,9 @@ Echoman 系统使用两个核心指标来衡量热点事件的影响力：
 
 ### 1.3 计算位置
 
-**代码位置**: `backend/app/api/v1/topics.py` (第95行)
+**代码位置**：
+- `backend/app/services/global_merge.py`：`_create_new_topic` / `_merge_to_topic` 更新 `first_seen`、`last_active`
+- `backend/app/api/v1/topics.py`：列表/详情接口中计算 `length_hours`
 
 ```python
 # 计算回声时长（小时数）
@@ -89,13 +93,14 @@ function formatEchoLength(hours: number): string {
 
 ### 2.1 定义
 
-回声强度表示事件在归并周期内的归一化热度值，反映事件相对于其他事件的热度水平。
+回声强度表示事件在归并周期内的归一化热度值，反映事件相对于同周期其他事件的热度水平。
+对于跨周期持续的 Topic，最终强度取**历史归并周期中的峰值**。
 
-> 📖 **应用场景**：热度归一化在每次归并流程中执行（每日3次：12:05、18:05、22:05，Asia/Shanghai），详见 [merge-logic.md](merge-logic.md#步骤1热度归一化)
+> 📖 **应用场景**：热度归一化在阶段一归并前执行（每日 **4 次**：08:05、12:05、18:05、22:05，Asia/Shanghai），详见 [merge-logic.md](merge-logic.md#阶段一新事件归并去噪) 与 `backend/app/tasks/merge_tasks.py`。
 
 ### 2.2 计算流程
 
-回声强度的计算分为**四个阶段**：
+回声强度的计算分为**四个阶段 + Topic 聚合**：
 
 #### 阶段1: 原始热度采集
 
@@ -114,7 +119,7 @@ function formatEchoLength(hours: number): string {
 
 对每个平台内的数据进行归一化到 **0-1** 范围。
 
-**代码位置**: `backend/app/services/heat_normalization.py` (第63-96行)
+**代码位置**: `backend/app/services/heat_normalization.py`
 
 ```python
 # 获取该平台的热度值列表
@@ -150,7 +155,7 @@ normalized = (value - min) / (max - min)
 
 不同平台有不同的权重，反映其影响力。
 
-**代码位置**: `backend/app/services/heat_normalization.py` (第98-109行)
+**代码位置**: `backend/app/services/heat_normalization.py`
 
 ```python
 # 应用平台权重
@@ -192,7 +197,7 @@ platform_weights_dict = {
 
 将归并周期内所有事件的热度总和归一化为 1.0，确保同一周期内事件热度具有可比性。
 
-**代码位置**: `backend/app/services/heat_normalization.py` (第111-116行)
+**代码位置**: `backend/app/services/heat_normalization.py`
 
 ```python
 # 全局归一化（使归并周期内所有事件热度和为 1.0）
@@ -203,10 +208,9 @@ if total_heat > 0:
         item.heat_normalized = item.heat_normalized / total_heat
 ```
 
-**归并周期说明**：
-- **上午（AM）**：8:00-12:00 的3次采集数据一起归一化
-- **下午（PM）**：14:00-18:00 的3次采集数据一起归一化
-- **傍晚（EVE）**：20:00-22:00 的2次采集数据一起归一化
+**归并周期说明（以代码为准）**：
+- 周期标识由 `HeatNormalizationService.calculate_period()` 计算：`<10 → MORN`，`<14 → AM`，`<20 → PM`，其余 `EVE`。
+- 归一化运行在阶段一归并前，通常对应 08:05 / 12:05 / 18:05 / 22:05 四个时间点。
 
 **归一化结果**：
 - 每个归并周期内所有事件的 `heat_normalized` 之和 = 1.0 (100%)
@@ -223,31 +227,49 @@ if total_heat > 0:
 归并周期总和: 1.0（100%）
 ```
 
-### 2.3 Topic热度聚合
+### 2.3 Topic热度聚合（当前周期热度）
 
 当多个 `source_item` 归并到一个 Topic 时：
 
-**代码位置**: `backend/app/services/global_merge.py` (第546-548行)
+**代码位置**：
+- `backend/app/services/global_merge.py`：`_create_new_topic` 初始化 `current_heat_normalized`
+- `backend/app/services/global_merge.py`：`_update_topic_heat` 计算并写入 `TopicPeriodHeat` / `current_heat_normalized`
 
 ```python
 current_heat_normalized = sum(
     item.heat_normalized or 0 for item in items
-) / len(items) if items else 0
+) if items else 0
 ```
 
 **公式**：
 ```
-Topic热度 = Σ(items的heat_normalized) / items数量
+Topic热度(本周期) = Σ(items的heat_normalized)
 ```
 
-### 2.4 前端显示
-
-**代码位置**: `backend/app/api/v1/topics.py` (第113行)
+**重要说明**：
+- 这里的 `items` 仅指**本次归并进来的事件组**，不是该 Topic 历史全部节点。
+- 该值会写入 `TopicPeriodHeat` 作为**本周期热度快照**。
+- `topic.current_heat_normalized` 取**历史峰值**：`max(历史峰值, 本周期热度)`。
 
 ```python
-"intensity_norm": round(heat_normalized, 4) if heat_normalized > 0 else 0
-# 返回 0-1 范围的值
+# 仅当本周期更高时更新峰值
+if topic.current_heat_normalized is None or heat_normalized > topic.current_heat_normalized:
+    topic.current_heat_normalized = heat_normalized
+    topic.heat_percentage = heat_normalized * 100
 ```
+
+### 2.4 前端显示 & 返回字段
+
+**代码位置**: `backend/app/api/v1/topics.py`（`/topics` 与 `/topics/today`）
+
+```python
+"intensity_raw": topic.intensity_total,  # Topic累计节点数
+"intensity_norm": round(heat_normalized, 4) if heat_normalized > 0 else 0  # 0-1范围
+```
+
+**字段含义**：
+- `intensity_raw`：Topic 累计节点数（每次归并进来会 `+len(items)`）。
+- `intensity_norm`：Topic 的**历史峰值热度**（0-1）。
 
 **前端转换** (`frontend/src/pages/ExplorerPage.tsx`):
 
@@ -263,8 +285,8 @@ Topic热度 = Σ(items的heat_normalized) / items数量
 ### 3.1 完整流程图
 
 ```
-原始数据采集 → 平台内归一化 → 平台权重加权 → 全局归一化 → Topic聚合 → 前端显示
-   (热度值)      (0-1范围)      (加权调整)    (总和=1.0)   (平均值)   (×100%)
+原始数据采集 → 平台内归一化 → 平台权重加权 → 全局归一化 → Topic聚合(本周期求和) → 前端显示
+   (热度值)      (0-1范围)      (加权调整)    (总和=1.0)      (求和)       (×100%)
 ```
 
 ### 3.2 实际数据示例
@@ -310,13 +332,14 @@ min = 620000, max = 850000
 Topic热度 = 0.0091
 
 假设事件B和其他2个item归并:
-Topic热度 = (0.0 + 0.005 + 0.008) / 3 = 0.0043
+Topic热度 = 0.0 + 0.005 + 0.008 = 0.013
 ```
+> 注：这里的求和仅针对**本次归并进来的 items**，不会把历史节点一起累计。
 
 **Step 6: 前端显示**
 ```
 Topic A: 0.0091 × 100 = 0.91%
-Topic B: 0.0043 × 100 = 0.43%
+Topic B: 0.013 × 100 = 1.3%（本周期占比；若后续周期更高，则峰值会更新）
 ```
 
 ---
@@ -360,7 +383,7 @@ if max_heat > 0:
 - 其他事件 = 相对于最热事件的百分比
 - 直观易懂
 
-**修改位置**: `backend/app/services/heat_normalization.py` 第111-116行
+**修改位置**: `backend/app/services/heat_normalization.py`
 
 #### 方案2: 分级区间归一化
 
@@ -389,7 +412,7 @@ for item in weighted_items:
 
 ### 5.1 回声热榜排序规则
 
-**代码位置**: `frontend/src/pages/ExplorerPage.tsx` (第51-76行)
+**代码位置**: `frontend/src/pages/ExplorerPage.tsx`
 
 ```typescript
 const sortedItems = [...items].sort((a, b) => {
@@ -452,8 +475,8 @@ const sortedItems = [...items].sort((a, b) => {
 ```
 
 **字段说明**：
-- `intensity_raw`: 原始强度（Topic包含的source_item数量）
-- `intensity_norm`: 归一化强度（0-1范围，前端需×100显示为百分比）
+- `intensity_raw`: Topic 累计节点数（`TopicNode` 数量）
+- `intensity_norm`: 归一化热度峰值（0-1范围，前端需×100显示为百分比）
 - `length_hours`: 回声长度（小时，精确到小数）
 - `length_days`: 回声长度（天，兼容性字段）
 
@@ -470,6 +493,8 @@ const sortedItems = [...items].sort((a, b) => {
 - ⚠️ **全局归一化策略存在问题**：总和=1.0导致值偏小
 - ✅ **平台内归一化合理**：Min-Max归一化
 - ✅ **平台权重机制良好**：反映不同平台影响力
+- ✅ **字段语义明确**：`intensity_raw` 是累计节点数，`intensity_norm` 是历史峰值热度
+- ✅ **更新时机明确**：只有在本周期发生归并且高于历史峰值时才更新 `current_heat_normalized`
 - 🔧 **建议优化**：采用相对最大值归一化
 
 ### 7.3 显示效果
@@ -500,5 +525,5 @@ const sortedItems = [...items].sort((a, b) => {
 ---
 
 **文档版本**: v1.0  
-**最后更新**: 2025-11-06  
+**最后更新**: 2026-01-22  
 **作者**: Echoman Team

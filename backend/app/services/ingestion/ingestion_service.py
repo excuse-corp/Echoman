@@ -4,6 +4,7 @@
 负责调度和管理各平台的数据采集
 """
 import hashlib
+import re
 import uuid
 from typing import List, Dict, Any, Optional
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -30,6 +31,12 @@ from scrapers import (
 
 class IngestionService:
     """采集服务"""
+
+    _NOISE_TITLES = {
+        "点击查看更多实时热点",
+        "点击查看更多热点",
+        "查看更多实时热点",
+    }
     
     # 平台爬虫映射
     SCRAPERS = {
@@ -200,6 +207,18 @@ class IngestionService:
                 # Python <3.9 fallback
                 loop = asyncio.get_event_loop()
                 items = await loop.run_in_executor(None, _fetch_sync)
+
+            raw_total = len(items)
+            filtered_items = []
+            skipped_items = 0
+            for item in items:
+                if self._is_noise_item(item):
+                    skipped_items += 1
+                    continue
+                filtered_items.append(item)
+            if skipped_items:
+                print(f"⚠️  {platform} 过滤噪音数据 {skipped_items} 条")
+            items = filtered_items
             
             # 保存到数据库
             success_count = 0
@@ -219,8 +238,10 @@ class IngestionService:
                 "platform": platform,
                 "status": "success",
                 "total": len(items),
+                "total_raw": raw_total,
                 "success": success_count,
-                "failed": failed_count
+                "failed": failed_count,
+                "skipped": skipped_items
             }
             
         except Exception as e:
@@ -285,6 +306,20 @@ class IngestionService:
         )
         
         self.db.add(source_item)
+
+    def _is_noise_item(self, item: Dict[str, Any]) -> bool:
+        title = (item.get("title") or "").strip()
+        if not title:
+            return True
+        compact_title = re.sub(r"\s+", "", title)
+        if compact_title in self._NOISE_TITLES:
+            return True
+        if "点击查看更多" in compact_title and ("热点" in compact_title or "热榜" in compact_title):
+            return True
+        url = (item.get("url") or "").strip()
+        if url and "top_news_list" in url:
+            return True
+        return False
     
     async def get_runs_history(self, limit: int = 20) -> List[RunIngest]:
         """

@@ -84,7 +84,7 @@ async def run_global_merge(self, period: str) -> Dict[str, Any]:
    └─ 调用 _batch_generate_summaries()（full 摘要 + topic_summary_* 向量）
 
 6. 热度截断新建 Topic（可配置）
-   ├─ `_downselect_new_topics()` 按 `GLOBAL_MERGE_NEW_TOPIC_KEEP_RATIO`（默认 0.5）保留热度前 N
+   ├─ `_downselect_new_topics()` 按 `GLOBAL_MERGE_NEW_TOPIC_KEEP_RATIO`（默认 1.0）保留热度前 N（当前不截断）
    ├─ 下线的 Topic 置 ended、热度清零，并删除摘要向量
 
 7. 更新前端数据
@@ -366,7 +366,7 @@ await db.commit()
        last_active=max(item.fetched_at for item in items),
        status="active",
        intensity_total=len(items),
-       current_heat_normalized=avg(items的heat_normalized)
+       current_heat_normalized=sum(items的heat_normalized)
    )
    db.add(topic)
    await db.flush()  # 获取topic.id
@@ -590,7 +590,7 @@ Topic(
     last_active=datetime,
     status="active",
     intensity_total=len(items),
-    current_heat_normalized=float,
+    current_heat_normalized=float,  # 峰值热度
     category="current_affairs"|"entertainment"|"sports_esports",
     category_confidence=float,
     category_method="rule"|"llm"
@@ -698,7 +698,7 @@ active_since = now_cn() - timedelta(days=180)   # 检索半年内 Topic
 # backend/app/config/settings.py
 global_merge_similarity_threshold = 0.5         # 摘要向量相似度过滤
 global_merge_topk_candidates = 3                # 候选数上限 3
-global_merge_new_topic_keep_ratio = 0.5         # 新建 Topic 按热度保留比例
+global_merge_new_topic_keep_ratio = 1.0         # 新建 Topic 按热度保留比例（不截断）
 ```
 
 ---
@@ -847,7 +847,7 @@ docs/数据流转架构.md                          # 系统架构文档
 - 批量处理（200组/轮）
 - 候选限制（Top-3，摘要向量，半年窗口）
 - Token管理（2500 tokens）
-- 新建 Topic 热度截断（`GLOBAL_MERGE_NEW_TOPIC_KEEP_RATIO`，默认保留前50%）
+- 新建 Topic 热度截断（`GLOBAL_MERGE_NEW_TOPIC_KEEP_RATIO`，默认保留全部）
 
 **当前状态**：
 - ✅ 功能完整，逻辑正确

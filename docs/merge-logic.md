@@ -10,6 +10,7 @@
 - **输入**：同一归并周期内采集到的 `source_items`，`merge_status=pending_event_merge`。
 - **周期命名**：按采集小时切分 period：`<10 → MORN`，`<14 → AM`，`<18 → PM`，其余 `EVE`。
 - **预处理**：标题标准化（全角转半角、去标点、数字归一化、小写）。
+- **采集侧噪音过滤**：拦截误操作条目（如“点击查看更多实时热点”或列表页链接），避免进入归并与入库。
 - **向量化**：标题+摘要 → Embedding（Chroma `source_item_<id>` 持久化）。
 - **聚类**：
   - 余弦相似度阈值 `0.80`。
@@ -30,7 +31,7 @@
 - 批量上限：每轮最多处理 **200** 个事件组。
 - Token 控制：prompt≈2500，候选摘要截断 200，completion 300。
 - 向量库：纯 **Chroma**，集合 `echoman_embeddings`，对象类型 `source_item` / `topic_summary`（已弃用 pgvector）。
-- 新建 Topic 热度截断：`GLOBAL_MERGE_NEW_TOPIC_KEEP_RATIO`（默认 1.0，当前配置 0.5）。若设为 0.5，则按当前热度保留前 50%，其余直接下线（status=ended），不做二次归一化。
+- 新建 Topic 热度截断：`GLOBAL_MERGE_NEW_TOPIC_KEEP_RATIO`（默认 1.0，当前配置 1.0）。当前不进行截断，全部新建 Topic 保留。
 
 ### 流程
 1. **代表项**：每组取一条代表 item（标题+摘要）。
@@ -41,7 +42,7 @@
    - 输入：代表项 + 候选 Topic（标题+摘要截断 200）。  
    - 输出 JSON：`merge/new`、`target_topic_id`、`confidence`。满足阈值则合并，否则新建。
 4. **合并路径**  
-   - 追加 TopicNodes；更新 `last_active`、`intensity_total`、`TopicPeriodHeat`、`current_heat_normalized/heat_percentage`。  
+   - 追加 TopicNodes；更新 `last_active`、`intensity_total`、`TopicPeriodHeat`、`current_heat_normalized/heat_percentage`（若本期更高则更新峰值）。  
    - 若 Topic 缺摘要或摘要向量，**即时写占位摘要+向量**，再做增量摘要。
 5. **新建路径**  
    - 创建 Topic；写节点与半日热度。  
@@ -63,7 +64,7 @@
 - 新增晨间归并时段：08:05（阶段一）/08:20（阶段二），period=MORN。  
 - 阶段二候选时间窗由 7 天扩至 **180 天**；候选数量固定 **Top-K=3**。  
 - 新建/合并时**同步写占位摘要+向量**，防止同一轮出现重复 Topic。  
-- 新建 Topic 热度截断：`GLOBAL_MERGE_NEW_TOPIC_KEEP_RATIO` 支持按热度比例保留（默认 1.0，现配置 0.5）；被截断的 Topic 直接 `ended`，热度清零，不二次归一化。  
+- 新建 Topic 热度截断：`GLOBAL_MERGE_NEW_TOPIC_KEEP_RATIO` 支持按热度比例保留（默认 1.0）；当前配置 1.0，不进行截断。  
 - 纯 Chroma 模式（不再使用 pgvector）；摘要向量作为主要召回索引。  
 - 晨间首轮因采集时间高度集中，部分 Topic 的 `length_hours` 可能接近 0，属正常；前端可显示为“低于2小时”以避免 0 时长的视觉噪声。  
 

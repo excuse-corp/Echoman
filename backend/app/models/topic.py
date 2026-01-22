@@ -42,8 +42,8 @@ class Topic(Base):
     interaction_total = Column(BigInteger, default=0, nullable=True, comment="互动总量（可选维度）")
     
     # ========== 热度字段 ==========
-    current_heat_normalized = Column(Float, nullable=True, comment="当前归一化热度（最新半日）")
-    heat_percentage = Column(Float, nullable=True, comment="当前热度占比（%）")
+    current_heat_normalized = Column(Float, nullable=True, comment="归一化热度峰值（跨归并周期取最大）")
+    heat_percentage = Column(Float, nullable=True, comment="热度占比峰值（%）")
     
     # ========== 摘要关联 ==========
     summary_id = Column(BigInteger, nullable=True, comment="当前主题摘要快照ID（外键）")
@@ -161,4 +161,3 @@ class TopicPeriodHeat(Base):
     
     def __repr__(self):
         return f"<TopicPeriodHeat(id={self.id}, topic_id={self.topic_id}, date={self.date}, period={self.period})>"
-

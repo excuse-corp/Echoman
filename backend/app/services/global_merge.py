@@ -221,8 +221,8 @@ class GlobalMergeService:
                 print(f"\\n📝 开始批量生成摘要（{len(new_topics)}个新Topic）...")
                 await self._batch_generate_summaries(new_topics)
 
-            # 按热度下线部分新建Topic（默认不下线，配置 GLOBAL_MERGE_NEW_TOPIC_KEEP_RATIO 调整）
-            downselect_stats = await self._downselect_new_topics(new_topics, period)
+            # 按热度下线部分新建Topic（当前禁用，保留全部新建Topic）
+            downselect_stats = None
             end_time = now_cn()
             duration_seconds = (end_time - start_time).total_seconds()
             print(f"✅ 归并完成: merge={merge_count}, new={new_count}, 耗时={duration_seconds:.2f}秒")
@@ -680,9 +680,10 @@ class GlobalMergeService:
                 last_active=max(item.fetched_at for item in items),
                 status="active",
                 intensity_total=len(items),
+                # Topic 当前周期热度占比：本次归并 items 的占比求和
                 current_heat_normalized=sum(
                     item.heat_normalized or 0 for item in items
-                ) / len(items) if items else 0
+                ) if items else 0
             )
             self.db.add(topic)
             await self.db.flush()  # 获取 topic.id
@@ -834,9 +835,10 @@ class GlobalMergeService:
         date_obj = datetime.strptime(date_str, "%Y-%m-%d").date()
         
         # 计算半日热度
+        # Topic 当前周期热度占比：本次归并 items 的占比求和
         heat_normalized = sum(
             item.heat_normalized or 0 for item in items
-        ) / len(items) if items else 0
+        ) if items else 0
         
         # 查找或创建半日热度记录
         stmt = select(TopicPeriodHeat).where(
@@ -866,9 +868,10 @@ class GlobalMergeService:
             )
             self.db.add(heat_record)
         
-        # 更新 Topic 的当前热度
-        topic.current_heat_normalized = heat_normalized
-        topic.heat_percentage = heat_normalized * 100
+        # 更新 Topic 的峰值热度（跨归并周期取最大值）
+        if topic.current_heat_normalized is None or heat_normalized > topic.current_heat_normalized:
+            topic.current_heat_normalized = heat_normalized
+            topic.heat_percentage = heat_normalized * 100
     
     async def _batch_generate_summaries(self, topics: List[Topic]):
         """

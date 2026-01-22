@@ -263,7 +263,7 @@ export function ExplorerPage() {
                         <h3>{item.title}</h3>
                         <div className="item-meta">
                           <span className="meta-chip">长度 {formatEchoLength(item.length_hours)}</span>
-                          <span className="meta-chip">强度 {Math.round(item.intensity_norm * 10000)}%</span>
+                          <span className="meta-chip">强度 {(item.intensity_norm * 10000).toFixed(1)}bp</span>
                           {item.last_active && (
                             <span className="meta-chip meta-chip-date">
                               最近活跃 {formatDateOnly(item.last_active)}

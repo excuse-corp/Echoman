@@ -35,6 +35,26 @@ class SinaScraper(BaseScraper):
             'Upgrade-Insecure-Requests': '1',
             'Cache-Control': 'max-age=0'
         })
+        self._noise_titles = {
+            "点击查看更多实时热点",
+            "点击查看更多热点",
+            "查看更多实时热点",
+        }
+
+    def _is_noise_item(self, title: str, url: str = "") -> bool:
+        """
+        过滤爬虫误操作产生的噪音项（如“点击查看更多实时热点”）
+        """
+        if not title:
+            return True
+        compact_title = re.sub(r"\s+", "", title)
+        if compact_title in self._noise_titles:
+            return True
+        if "点击查看更多" in compact_title and ("热点" in compact_title or "热榜" in compact_title):
+            return True
+        if url and "top_news_list" in url:
+            return True
+        return False
         
     def fetch_hot_list(self, limit: int = 30) -> List[Dict[str, Any]]:
         """
@@ -119,6 +139,9 @@ class SinaScraper(BaseScraper):
                     title = (item.get('title') or item.get('Title') or '').strip()
                     if not title:
                         continue
+                    url = item.get('url') or item.get('link') or ''
+                    if self._is_noise_item(title, url):
+                        continue
                     
                     result = {
                         'platform': self.platform,
@@ -130,7 +153,7 @@ class SinaScraper(BaseScraper):
                             item.get('desc') or 
                             title
                         ).strip(),
-                        'url': item.get('url') or item.get('link') or '',
+                        'url': url,
                         'keywords': item.get('keywords') or '',
                         'ctime': item.get('ctime') or item.get('time') or '',
                         'media_name': item.get('media_name') or item.get('source') or '新浪新闻',
@@ -210,6 +233,8 @@ class SinaScraper(BaseScraper):
                     # 补全URL
                     if url and not url.startswith('http'):
                         url = urljoin(self.base_url, url)
+                    if self._is_noise_item(title, url):
+                        continue
                     
                     rank = len(results) + 1
                     
