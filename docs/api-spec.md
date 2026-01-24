@@ -464,6 +464,6 @@
 ### ⚙️ LLM配置说明
 
 LLM配置通过后端配置文件管理，不需要API接口：
-- 配置文件：`backend/env.template`
+- 配置文件：`env.template`
 - 配置项：`LLM_PROVIDER`, `LLM_MODEL`, `EMBEDDING_MODEL` 等
 - 修改后需重启后端服务生效

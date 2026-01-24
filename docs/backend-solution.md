@@ -486,7 +486,7 @@
 
 ## 环境与配置
 
-- 依赖库与版本见 `docs/experiment.txt`。
+- 依赖库与版本见根目录 `requirements.txt`。
 - 环境变量示例见 `.env.example`。
 - 关键变量：
   - `DB_URL`、`REDIS_URL`、`LLM_PROVIDER`、`OPENAI_API_KEY`/`AZURE_*`/`DASHSCOPE_API_KEY`
@@ -787,7 +787,7 @@ topic_id | date       | period | heat_normalized | heat_percentage | source_coun
 
 **6. 配置管理**
 - ✅ 环境变量配置（`backend/app/config/settings.py`）
-- ✅ 环境模板（`backend/env.template`）
+- ✅ 环境模板（`env.template`）
 - ✅ 数据库配置
 - ✅ CORS配置
 
@@ -968,5 +968,5 @@ topic_id | date       | period | heat_normalized | heat_percentage | source_coun
 - API规范: `docs/api-spec.md`（已更新，核心API完成度100%）
 - SSE集成指南: `docs/sse-integration-guide.md`（新增，2025-10-31）
 - 归并逻辑: `docs/merge-logic.md`
-- 环境配置: `backend/env.template`
+- 环境配置: `env.template`
 - 前端对接: `frontend/README.md`（已更新）
