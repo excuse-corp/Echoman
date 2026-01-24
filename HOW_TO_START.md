@@ -74,7 +74,7 @@ python frontend.py
 
 3. **安装依赖**
    - 检查是否已安装 FastAPI、SQLAlchemy、Celery 等核心依赖
-   - 仓库当前不含 `backend/requirements.txt`，需自行在 conda 环境中安装依赖
+   - 推荐直接安装根目录 `requirements.txt`
 
 4. **初始化数据库**
    - 创建 pgvector 扩展
@@ -165,7 +165,7 @@ python scripts/init_tables.py recreate
 
 ## LLM 配置（必读）
 
-后端会同时使用 **对话模型** 和 **Embedding 模型**。所有配置都写在 `backend/.env`（可从 `backend/env.template` 复制）。
+后端会同时使用 **对话模型** 和 **Embedding 模型**。所有配置都写在 `.env`（可从 `env.template` 复制）。
 
 核心变量：
 - `LLM_PROVIDER`：`qwen` | `openai` | `azure` | `openai_compatible`
@@ -357,8 +357,8 @@ pip install --upgrade pip
 
 # 清理缓存并重新安装
 pip cache purge
-# 仓库未提供 requirements.txt，请按实际依赖安装
-# 例如：pip install fastapi sqlalchemy celery redis chromadb ...
+# 推荐使用根目录 requirements.txt 安装
+pip install -r requirements.txt
 ```
 
 ### Q4: 前端启动失败

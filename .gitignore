@@ -1,0 +1,59 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.so
+*.egg-info/
+*.egg
+.Python
+build/
+dist/
+.eggs/
+*.egg-info/
+*.egg
+venv/
+.venv/
+env/
+ENV/
+
+# Logs
+*.log
+*.out
+logs/
+backend_services.log
+frontend.log
+
+# Env / secrets
+.env
+.env.local
+.env.*.local
+
+# Celery Beat schedule
+backend/celerybeat-schedule.*
+celerybeat-schedule
+celerybeat.pid
+
+# Chroma / vector data
+backend/data/chroma/
+data/chroma/
+chroma.sqlite3
+
+# Node / frontend
+frontend/node_modules/
+frontend/dist/
+frontend/.env.local
+frontend/.env.*.local
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.cache/
+backend/output/
+test_out/
+alembic/versions/*.pyc
+docker-compose.override.yml
