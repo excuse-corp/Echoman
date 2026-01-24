@@ -15,6 +15,14 @@ Echoman 是一个“多平台热点 → 归并为话题 → 追踪传播回声 �
 - **RAG 对话**：`topic/global` 双模式，支持 **SSE 流式输出**
 - **监控接口**：健康检查、Prometheus 指标（见下方 API）
 
+## 系统流程（概览）
+
+```
+采集（8次/天） → 噪音过滤 → 阶段一归并（向量/标题聚类 + LLM判定）
+             → 出现次数筛选（>=2） → 阶段二归并（召回历史话题 + LLM判定）
+             → 话题摘要/分类/热度 → 前端展示
+```
+
 ## 快速启动（本机开发）
 
 ### 前置要求
@@ -35,6 +43,8 @@ cp backend/env.template backend/.env
 - `DB_*`（默认 `echoman / echoman_password / echoman`）
 - `LLM_PROVIDER` 与对应的 `*_API_KEY`/`*_BASE_URL`
 - `VECTOR_DB_TYPE`（默认 `chroma`，使用本地持久化目录 `backend/data/chroma/`）
+
+> LLM 详细配置（Qwen/OpenAI/Azure/OpenAI Compatible）请看：`HOW_TO_START.md` 的 **LLM 配置** 部分。
 
 ### 2) 启动后端（API + Worker + Beat + DB）
 
@@ -97,6 +107,13 @@ python frontend.py
 
 > 说明：当前 `monitoring` 路由在代码中同时设置了 include 前缀与 router 前缀，因此实际路径为 `.../monitoring/monitoring/...`。
 
+## 运营与数据维护
+
+- **噪音数据清理脚本**：`backend/scripts/cleanup_noise_items.py`
+  - 默认 dry-run，使用 `--apply` 执行删除（含 Topic/SourceItem/向量清理）
+- **Chroma 数据目录**：`backend/data/chroma/`（本地持久化）
+- **Celery Beat 调度文件**：`backend/celerybeat-schedule.*` 为调度状态存储，可删除重建；不要手改
+
 ## 运行脚本与日志
 
 - `start.sh`：后台启动 `python backend.py --all --db --restart-celery`，日志 `backend_services.log`，PID `backend_services.pid`
@@ -144,6 +161,7 @@ Echoman/
 - `docs/merge-logic.md`：归并逻辑说明
 - `docs/ECHO_METRICS_CALCULATION.md`：回声指标计算说明
 - `docs/api-spec.md`：API 规范（更偏文档化描述）
+- `docs/数据流转架构.md`：数据流转与表结构说明
 
 ## 注意事项（务必读）
 
@@ -151,7 +169,6 @@ Echoman/
 - **脚本强依赖 conda 路径**：`backend.py`/`frontend.py` 默认 `source /root/anaconda3/etc/profile.d/conda.sh && conda activate echoman`；如你的 conda 安装路径或环境名不同，请按实际修改。
 - **前端有 fallback 数据**：当前前端在请求后端失败时会回退到内置示例数据（用于 UI 演示与开发），排查时请以浏览器 Network 与后端 `/docs` 为准。
 - **不要提交密钥**：请将 `backend/.env` 视为本地配置文件，避免提交包含 API Key 的版本。
-  - **Celery Beat 调度文件**：`backend/celerybeat-schedule.*` 为调度持久化文件，可删除重建；不要手改。
 
 ## 贡献
 
