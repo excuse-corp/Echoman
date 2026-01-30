@@ -27,9 +27,9 @@ Echoman 是一个“多平台热点 → 归并为话题 → 追踪传播回声 �
 
 ### 前置要求
 
-- Python 3.11+（项目脚本默认使用 `conda` 环境名 `echoman`）
+- Python 3.11+
 - Node.js 18+
-- Docker + Docker Compose（用于一键启动 PostgreSQL/Redis；也可手动本地安装）
+- Docker + Docker Compose（用于一键启动 PostgreSQL/Redis）
 
 ### 1) 配置后端环境变量
 

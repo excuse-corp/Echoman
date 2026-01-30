@@ -103,55 +103,21 @@ python frontend.py
 
 ### 必需软件
 
-- **Python 3.11+** (通过 conda echoman 环境)
+- **Python 3.11+** 
 - **Node.js 18+** (用于前端)
-- **数据库（二选一）**:
-  - **选项1 (推荐)**: Docker & Docker Compose - 快速开始，一键启动
-  - **选项2**: 本地安装 PostgreSQL 15+ 和 Redis 6+ - 完全控制，适合生产环境
-  - 详见: [本地数据库安装指南](./backend/INSTALL_LOCAL_DATABASE.md)
+- **数据库**:
+  -  Docker & Docker Compose - 快速开始，一键启动
 
-### Conda 环境
-
-确保已创建并激活 `echoman` 环境：
-
-```bash
-conda create -n echoman python=3.11
-conda activate echoman
-```
 
 ## 数据库管理
 
-### 📚 数据库安装文档导航
-
-- 🆚 [对比两种方式](./backend/DATABASE_OPTIONS.md) - 帮助您选择
-- 📝 [快速安装摘要](./backend/DATABASE_SETUP_SUMMARY.md) - 一键安装命令
-- 📖 [本地安装详细教程](./backend/INSTALL_LOCAL_DATABASE.md) - 完整步骤
-
-### 方式一：使用 Docker（推荐新手）
+### 使用 Docker
 
 ```bash
 cd backend
 docker-compose up -d postgres redis
 ```
 
-### 方式二：本地安装（推荐生产）
-
-查看 [INSTALL_LOCAL_DATABASE.md](./backend/INSTALL_LOCAL_DATABASE.md)
-
-### 手动管理数据库表
-
-```bash
-cd backend
-
-# 创建表
-python scripts/init_tables.py create
-
-# 删除表（危险操作）
-python scripts/init_tables.py drop
-
-# 重新创建表
-python scripts/init_tables.py recreate
-```
 
 ### Chroma 向量数据库
 
@@ -161,7 +127,6 @@ python scripts/init_tables.py recreate
 - **自动初始化**: 首次启动时自动创建
 - **无需手动配置**: 开箱即用
 
-📖 **详细文档**: [Chroma 向量数据库配置](./docs/CHROMA_VECTOR_DATABASE.md)
 
 ## LLM 配置（必读）
 
@@ -171,77 +136,12 @@ python scripts/init_tables.py recreate
 - `LLM_PROVIDER`：`qwen` | `openai` | `azure` | `openai_compatible`
 - `LLM_MAX_TOKENS` / `LLM_TEMPERATURE` / `LLM_TIMEOUT_SECONDS`：通用推理参数
 
-### 方案 A：Qwen（默认）
-```
-LLM_PROVIDER=qwen
-QWEN_MODEL=qwen3-32b
-QWEN_EMBEDDING_MODEL=Qwen3-Embedding-8B
-QWEN_API_BASE=http://localhost:8000/v1
-QWEN_API_KEY=sk-xxx
-```
 
-### 方案 B：OpenAI
-```
-LLM_PROVIDER=openai
-OPENAI_API_KEY=sk-xxx
-OPENAI_MODEL=gpt-4o-mini
-OPENAI_EMBEDDING_MODEL=text-embedding-3-large
-```
-
-### 方案 C：Azure OpenAI
-```
-LLM_PROVIDER=azure
-AZURE_OPENAI_API_KEY=xxx
-AZURE_OPENAI_ENDPOINT=https://<resource>.openai.azure.com
-AZURE_OPENAI_API_VERSION=2024-02-15-preview
-AZURE_DEPLOYMENT_NAME=<your-deployment>
-```
-
-### 方案 D：OpenAI Compatible（Ollama / vLLM / LM Studio）
-```
-LLM_PROVIDER=openai_compatible
-OPENAI_COMPATIBLE_BASE_URL=http://localhost:11434/v1
-OPENAI_COMPATIBLE_API_KEY=not-needed
-OPENAI_COMPATIBLE_MODEL=llama3
-OPENAI_COMPATIBLE_EMBEDDING_MODEL=nomic-embed-text
-```
 
 说明：
 - Embedding 可以单独配置地址与密钥：`OPENAI_COMPATIBLE_EMBEDDING_BASE_URL`、`OPENAI_COMPATIBLE_EMBEDDING_API_KEY`
 - 若 Embedding 不配置，会复用对话模型的 base_url / api_key
 
-### 查看数据库
-
-```bash
-# 连接 PostgreSQL
-psql -h localhost -U echoman -d echoman
-
-# 常用命令
-\dt                    # 查看所有表
-\d source_items        # 查看表结构
-SELECT * FROM topics;  # 查询数据
-\q                     # 退出
-```
-
-## 测试 API（端口 8778）
-
-### 使用 curl
-
-```bash
-# 健康检查
-curl http://localhost:8778/health
-
-# 触发采集
-curl -X POST "http://localhost:8778/api/v1/ingest/run" \
-  -H "Content-Type: application/json" \
-  -d '{"platforms": ["weibo", "zhihu"], "limit": 10}'
-
-# 查看采集历史
-curl http://localhost:8778/api/v1/ingest/runs
-
-# 查看话题列表
-curl "http://localhost:8778/api/v1/topics?page=1&size=20"
-```
 
 ### 使用 API 文档
 
@@ -284,154 +184,4 @@ curl "http://localhost:8778/api/v1/topics?page=1&size=20"
 
 **每次采集各平台热榜前 30 条数据**
 
-### 高级功能
 
-#### 监控 Celery 任务（可选）
-
-启动 Flower 监控界面：
-
-```bash
-cd backend
-conda activate echoman
-celery -A app.tasks.celery_app flower --port=5555
-```
-
-访问 http://localhost:5555 查看任务监控界面。
-
-#### 分离运行服务（不推荐，除非特殊需求）
-
-如果需要在不同终端分别运行各服务：
-
-```bash
-# 终端 1: API 服务器
-python backend.py --api
-
-# 终端 2: Celery Worker
-python backend.py --worker
-
-# 终端 3: Celery Beat
-python backend.py --beat
-```
-
-## 常见问题
-
-### Q1: 端口被占用
-
-**问题**: `Address already in use` 错误
-
-**解决**:
-```bash
-# 查找占用端口的进程
-lsof -i :8778
-lsof -i :5173
-
-# 杀死进程
-kill -9 <PID>
-```
-
-### Q2: 数据库连接失败
-
-**问题**: 无法连接到 PostgreSQL
-
-**解决**:
-```bash
-# 检查 Docker 容器状态
-cd backend
-docker-compose ps
-
-# 查看日志
-docker-compose logs postgres
-
-# 重启数据库
-docker-compose restart postgres
-```
-
-### Q3: 依赖安装失败
-
-**问题**: pip install 出错
-
-**解决**:
-```bash
-# 升级 pip
-pip install --upgrade pip
-
-# 清理缓存并重新安装
-pip cache purge
-# 推荐使用根目录 requirements.txt 安装
-pip install -r requirements.txt
-```
-
-### Q4: 前端启动失败
-
-**问题**: npm 相关错误
-
-**解决**:
-```bash
-cd frontend
-
-# 删除依赖并重新安装
-rm -rf node_modules package-lock.json
-npm install
-
-# 清理缓存
-npm cache clean --force
-```
-
-## 🛑 停止服务
-
-### 停止后端
-
-在后端运行窗口按 `Ctrl+C`
-
-**新版 backend.py 会自动优雅停止所有服务（API、Worker、Beat）**
-
-### 停止前端
-
-在前端运行窗口按 `Ctrl+C`
-
-### 停止数据库
-
-```bash
-cd backend
-docker-compose down
-
-# 或者只停止服务，保留数据
-docker-compose stop
-```
-
-## 目录结构
-
-```
-Echoman/
-├── backend.py              # 后端启动脚本 ✨
-├── frontend.py             # 前端启动脚本 ✨
-├── backend/                # 后端代码
-│   ├── app/               # FastAPI 应用
-│   ├── scrapers/          # 爬虫模块
-│   ├── scripts/           # 工具脚本
-│   ├── docker-compose.yml # Docker 配置
-│   ├── backend_quickstart.md     # 详细启动指南
-│   └── PROJECT_STATUS.md # 项目状态
-├── frontend/              # 前端代码
-├── docs/                  # 文档
-└── HOW_TO_START.md       # 本文档
-```
-
-## 下一步
-
-1. 访问前端界面开始使用
-2. 查看 API 文档了解接口
-3. 测试采集功能
-4. 查看项目状态了解待实现功能
-
-## 相关文档
-
-- [后端快速启动](./backend/backend_quickstart.md) - 详细的后端启动说明
-- [后端完整文档](./backend/BACKEND_README.md) - 后端架构和功能说明
-- [项目状态](./backend/PROJECT_STATUS.md) - 当前实现进度
-- [API 规范](./docs/api-spec.md) - API 接口文档
-- [方案设计](./docs/backend-solution.md) - 系统设计方案
-
----
-
-**提示**: 首次启动可能需要几分钟时间下载依赖和初始化数据库，请耐心等待。

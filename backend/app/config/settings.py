@@ -5,7 +5,7 @@
 """
 import json
 from typing import Dict, List
-from pydantic import Field, validator
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -163,32 +163,13 @@ class Settings(BaseSettings):
     classifier_debounce_delta: float = Field(default=0.25, description="分类防抖Delta")
     category_metrics_window_days: int = Field(default=30, description="分类指标窗口天数")
     
-    # ========== 限流配置 ==========
-    rate_limit_per_platform: int = Field(default=60, description="每平台限流数")
-    rate_limit_window_seconds: int = Field(default=60, description="限流窗口秒数")
-    
-    # ========== 监控配置 ==========
-    prometheus_port: int = Field(default=9090, description="Prometheus端口")
-    metrics_enabled: bool = Field(default=True, description="是否启用指标")
-    log_level: str = Field(default="INFO", description="日志级别")
-    structured_logging: bool = Field(default=True, description="是否使用结构化日志")
-    
     # ========== 安全配置 ==========
-    secret_key: str = Field(default="your-secret-key-change-in-production", description="密钥")
-    access_token_expire_minutes: int = Field(default=1440, description="访问令牌过期分钟数")
     allowed_origins: str = Field(default="http://localhost:3000,http://localhost:5173,http://202.114.234.85:5173", description="允许的CORS源")
     
     @property
     def allowed_origins_list(self) -> List[str]:
         """返回允许的CORS源列表"""
         return [origin.strip() for origin in self.allowed_origins.split(",")]
-    
-    # ========== 对象存储配置 ==========
-    use_object_storage: bool = Field(default=False, description="是否使用对象存储")
-    s3_bucket: str = Field(default="echoman-snapshots", description="S3存储桶")
-    s3_region: str = Field(default="us-east-1", description="S3区域")
-    s3_access_key: str = Field(default="", description="S3访问密钥")
-    s3_secret_key: str = Field(default="", description="S3密钥")
     
     model_config = SettingsConfigDict(
         env_file=".env",
