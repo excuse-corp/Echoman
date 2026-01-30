@@ -121,59 +121,7 @@ python frontend.py
 - `backend.py`：后端服务管理器（API/Worker/Beat 任意组合）
 - `frontend.py`：前端开发服务器启动器（缺依赖时自动 `npm install`）
 
-## 技术栈（按仓库代码实际使用）
 
-- 后端：FastAPI、SQLAlchemy（async）、Celery、PostgreSQL、Redis、Chroma（`chromadb.PersistentClient`）
-- 前端：React、React Router、Vite、TypeScript（无 UI 组件库，原生 CSS）
-
-## 项目结构
-
-```
-Echoman/
-├── backend.py
-├── frontend.py
-├── start.sh
-├── stop.sh
-├── HOW_TO_START.md
-├── env.template
-├── requirements.txt
-├── backend/
-│   ├── app/                 # FastAPI 应用（api/models/services/tasks...）
-│   ├── scrapers/            # 7个平台热点爬虫
-│   ├── scripts/             # 初始化与批处理脚本
-│   ├── docker-compose.yml   # PostgreSQL/Redis +（可选）服务编排
-│   └── data/                # 本地数据（含 chroma 持久化目录）
-├── frontend/
-│   ├── src/
-│   ├── vite.config.ts       # dev server proxy: /api/v1 -> 8778
-│   └── .env.development
-└── docs/
-    ├── api-spec.md
-    ├── backend-solution.md
-    ├── merge-logic.md
-    ├── ECHO_METRICS_CALCULATION.md
-    └── 数据流转架构.md
-```
-
-## 文档导航
-
-- `HOW_TO_START.md`：启动指南（含脚本说明与常见问题）
-- `docs/service-map.md`：端口与服务一览（如有出入，以代码/脚本为准）
-- `docs/merge-logic.md`：归并逻辑说明
-- `docs/ECHO_METRICS_CALCULATION.md`：回声指标计算说明
-- `docs/api-spec.md`：API 规范（更偏文档化描述）
-- `docs/数据流转架构.md`：数据流转与表结构说明
-
-## 注意事项（务必读）
-
-- **依赖安装**：已补齐根目录 `requirements.txt`。如使用 Docker/全新环境，请先执行 `pip install -r requirements.txt`。
-- **脚本强依赖 conda 路径**：`backend.py`/`frontend.py` 默认 `source /root/anaconda3/etc/profile.d/conda.sh && conda activate echoman`；如你的 conda 安装路径或环境名不同，请按实际修改。
-- **前端有 fallback 数据**：当前前端在请求后端失败时会回退到内置示例数据（用于 UI 演示与开发），排查时请以浏览器 Network 与后端 `/docs` 为准。
-- **不要提交密钥**：请将 `.env` 视为本地配置文件，避免提交包含 API Key 的版本。
-
-## 贡献
-
-欢迎提交 Issue / PR（建议同时更新相关 `docs/` 与接口说明）。
 
 ## 许可证
 
