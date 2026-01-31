@@ -4,6 +4,7 @@
 使用 pydantic-settings 从环境变量加载配置
 """
 import json
+from pathlib import Path
 from typing import Dict, List
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -172,7 +173,8 @@ class Settings(BaseSettings):
         return [origin.strip() for origin in self.allowed_origins.split(",")]
     
     model_config = SettingsConfigDict(
-        env_file=".env",
+        # settings.py -> config -> app -> backend -> project root
+        env_file=str(Path(__file__).resolve().parents[3] / ".env"),
         env_file_encoding="utf-8",
         case_sensitive=False,
         extra="ignore"
