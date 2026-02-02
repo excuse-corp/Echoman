@@ -438,6 +438,27 @@ export const FALLBACK_DATASET_NOTE = "????????????????????????????????";
 export const FALLBACK_HOTSPOTS = fallbackHotspots;
 export const FALLBACK_CATEGORY_STATS = fallbackCategoryStats;
 
+export async function verifyInviteCode(code: string): Promise<{ valid: boolean; token?: string; expires_at?: string }> {
+  const response = await fetch(`${API_BASE_URL}/free/verify`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ code }),
+  });
+
+  if (!response.ok) {
+    let detail = "";
+    try {
+      const data = await response.json();
+      detail = data?.detail || "";
+    } catch {
+      detail = "";
+    }
+    throw new Error(detail || `API错误: ${response.status}`);
+  }
+
+  return response.json();
+}
+
 /**
  * 问答API - 支持流式和非流式
  */
@@ -445,19 +466,24 @@ export async function askQuestion(params: {
   query: string;
   mode: "global" | "topic";
   topicId?: string;
+  freeToken?: string;
+  history?: Array<{ role: "user" | "assistant"; content: string }>;
+  signal?: AbortSignal;
   stream?: boolean;
   onToken?: (token: string) => void;
   onCitations?: (citations: ChatResponse["citations"]) => void;
   onDone?: (diagnostics: ChatResponse["diagnostics"]) => void;
   onError?: (error: string) => void;
 }): Promise<ChatResponse | null> {
-  const { query, mode, topicId, stream = false, onToken, onCitations, onDone, onError } = params;
+  const { query, mode, topicId, freeToken, history, signal, stream = false, onToken, onCitations, onDone, onError } = params;
 
   try {
     const requestBody = {
       query,
       mode,
       topic_id: topicId ? parseInt(topicId) : undefined,
+      free_token: freeToken,
+      history,
       stream,
     };
 
@@ -467,6 +493,7 @@ export async function askQuestion(params: {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(requestBody),
+        signal,
       });
 
       if (!response.ok) {
@@ -481,6 +508,7 @@ export async function askQuestion(params: {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(requestBody),
+        signal,
       });
 
       if (!response.ok) {
@@ -540,6 +568,9 @@ export async function askQuestion(params: {
       return null; // 流式模式通过回调返回数据
     }
   } catch (error) {
+    if (error instanceof DOMException && error.name === "AbortError") {
+      return null;
+    }
     const errorMessage = error instanceof Error ? error.message : "未知错误";
     if (onError) {
       onError(errorMessage);

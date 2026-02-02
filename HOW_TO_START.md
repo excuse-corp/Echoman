@@ -21,6 +21,18 @@
 ./stop.sh
 ```
 
+### 自由模式说明（必读）
+
+自由模式需要先通过 **邀请码校验** 获取访问令牌：
+
+- 接口：`POST /api/v1/free/verify`
+- 成功后返回 `free_token`
+- 调用 `POST /api/v1/chat/ask` 且 `mode=global` 时必须携带 `free_token`
+
+令牌默认有效期 7 天，可在 `.env` 中配置：
+- `FREE_MODE_INVITE_TTL_DAYS`
+- `FREE_MODE_TOKEN_TTL_HOURS`
+
 ### 自定义启动组合
 
 - 前台查看日志 / 精细控制：
@@ -183,5 +195,4 @@ docker-compose up -d postgres redis
 | 22:20 | EVE 整体归并 | 与历史话题比对 |
 
 **每次采集各平台热榜前 30 条数据**
-
 

@@ -8,6 +8,7 @@ from .summary import Summary
 from .chat import Chat, ChatMessage, Citation
 from .run import RunIngest, RunPipeline
 from .metrics import CategoryDayMetrics
+from .free_mode import FreeModeInvite, FreeModeAccessToken
 
 # 向后兼容：保留旧名称
 TopicHalfdayHeat = TopicPeriodHeat
@@ -28,5 +29,6 @@ __all__ = [
     "RunIngest",
     "RunPipeline",
     "CategoryDayMetrics",
+    "FreeModeInvite",
+    "FreeModeAccessToken",
 ]
-

@@ -13,6 +13,7 @@ Echoman 是一个“多平台热点 → 归并为话题 → 追踪传播回声 �
 - **回声指标**：回声长度（话题持续时间）、强度等统计指标（前端用于排序/展示）
 - **分类与指标**：三分类（娱乐/社会时事/体育电竞）+ 分类聚合统计
 - **RAG 对话**：`topic/global` 双模式，支持 **SSE 流式输出**
+- **自由模式**：需要邀请码换取 `free_token`，`mode=global` 时后端强校验
 - **监控接口**：健康检查、Prometheus 指标（见下方 API）
 
 ## 系统流程（概览）
@@ -43,6 +44,7 @@ cp env.template .env
 - `DB_*`（默认 `echoman / echoman_password / echoman`）
 - `LLM_PROVIDER` 与对应的 `*_API_KEY`/`*_BASE_URL`
 - `VECTOR_DB_TYPE`（默认 `chroma`，使用本地持久化目录 `backend/data/chroma/`）
+- 自由模式相关：`FREE_MODE_INVITE_TTL_DAYS`、`FREE_MODE_TOKEN_TTL_HOURS`
 
 > LLM 详细配置（Qwen/OpenAI/Azure/OpenAI Compatible）请看：`HOW_TO_START.md` 的 **LLM 配置** 部分。
 
@@ -98,6 +100,8 @@ python frontend.py
 - 对话（RAG）
   - `POST /api/v1/chat/ask`：问答（`stream=true` 时返回 SSE 事件流）
   - `POST /api/v1/chat/create`：创建会话
+- 自由模式
+  - `POST /api/v1/free/verify`：邀请码校验并返回 `free_token`
 - 分类与指标
   - `GET /api/v1/categories`：分类列表
   - `GET /api/v1/categories/metrics/summary`：分类统计摘要

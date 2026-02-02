@@ -156,6 +156,10 @@ class Settings(BaseSettings):
     rag_max_context_tokens: int = Field(default=20000, description="RAG最大上下文Token数（包括检索内容）")
     rag_max_completion_tokens: int = Field(default=2000, description="RAG生成回复最大Token数")
     rag_enable_token_optimization: bool = Field(default=True, description="是否启用Token优化")
+
+    # ========== 自由模式配置 ==========
+    free_mode_invite_ttl_days: int = Field(default=7, description="自由模式邀请码默认有效期（天）")
+    free_mode_token_ttl_hours: int = Field(default=168, description="自由模式令牌有效期（小时）")
     
     # ========== 分类配置 ==========
     classifier_provider: str = Field(default="llm", description="分类器提供商")

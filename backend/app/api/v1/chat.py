@@ -13,6 +13,7 @@ import asyncio
 
 from app.core import get_db
 from app.services.rag_service import RAGService
+from app.services.free_mode_service import FreeModeService
 from app.utils.timezone import now_cn
 
 
@@ -28,6 +29,8 @@ class AskRequest(BaseModel):
     topic_id: Optional[int] = None
     chat_id: Optional[int] = None
     stream: bool = False  # 是否使用流式输出
+    free_token: Optional[str] = None  # 自由模式访问令牌
+    history: Optional[list[dict]] = None  # 对话历史（role/content）
 
 
 class Citation(BaseModel):
@@ -88,8 +91,15 @@ async def ask_question(
     - stream=true: 返回SSE事件流
     """
     rag_service = RAGService()
+    free_mode_service = FreeModeService()
     
     try:
+        if request.mode == "global":
+            try:
+                await free_mode_service.validate_access_token(db, request.free_token or "")
+            except ValueError as e:
+                raise HTTPException(status_code=403, detail=str(e))
+
         # 如果请求流式输出
         if request.stream:
             return await _stream_chat_response(
@@ -98,7 +108,8 @@ async def ask_question(
                 query=request.query,
                 mode=request.mode,
                 topic_id=request.topic_id,
-                chat_id=request.chat_id
+                chat_id=request.chat_id,
+                history=request.history
             )
         
         # 非流式：返回完整响应
@@ -107,7 +118,8 @@ async def ask_question(
             query=request.query,
             mode=request.mode,
             topic_id=request.topic_id,
-            chat_id=request.chat_id
+            chat_id=request.chat_id,
+            history=request.history
         )
         
         return AskResponse(**result)
@@ -152,7 +164,8 @@ async def _stream_chat_response(
     query: str,
     mode: str,
     topic_id: Optional[int],
-    chat_id: Optional[int]
+    chat_id: Optional[int],
+    history: Optional[list[dict]] = None
 ):
     """
     SSE流式响应生成器
@@ -171,7 +184,8 @@ async def _stream_chat_response(
                 query=query,
                 mode=mode,
                 topic_id=topic_id,
-                chat_id=chat_id
+                chat_id=chat_id,
+                history=history
             ):
                 event_type = event.get("type")
                 data = event.get("data", {})
@@ -204,4 +218,3 @@ async def _stream_chat_response(
 async def chat_health():
     """健康检查"""
     return {"status": "ok", "service": "chat"}
-

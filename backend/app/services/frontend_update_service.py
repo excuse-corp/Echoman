@@ -45,6 +45,13 @@ class FrontendUpdateService:
         except Exception as e:
             print(f"  ⚠️  刷新Topic统计失败（不影响后续）: {e}")
             await self.db.rollback()
+
+        # 2.1 刷新 topic_item 物化视图（供Agent工具使用）
+        try:
+            await self._refresh_topic_item_view()
+        except Exception as e:
+            print(f"  ⚠️  刷新topic_item视图失败（不影响后续）: {e}")
+            await self.db.rollback()
         
         # 3. 记录归并完成事件（可选：用于前端轮询检测）
         try:
@@ -108,6 +115,14 @@ class FrontendUpdateService:
             """))
         except Exception as e:
             print(f"  ⚠️  刷新Topic统计失败: {e}")
+            await self.db.rollback()
+
+    async def _refresh_topic_item_view(self):
+        """刷新 topic_item 物化视图"""
+        try:
+            await self.db.execute(text("REFRESH MATERIALIZED VIEW topic_item_mv"))
+        except Exception as e:
+            print(f"  ⚠️  刷新 topic_item_mv 失败: {e}")
             await self.db.rollback()
     
     async def _log_merge_completion(self, period: str, merge_stats: dict):

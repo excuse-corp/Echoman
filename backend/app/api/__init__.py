@@ -1,6 +1,6 @@
 """API 路由模块"""
 from fastapi import APIRouter
-from .v1 import ingest, topics, admin, chat, categories
+from .v1 import ingest, topics, admin, chat, categories, free_mode
 
 # 创建主路由
 api_router = APIRouter()
@@ -11,5 +11,6 @@ api_router.include_router(topics.router, prefix="/topics", tags=["话题"])
 api_router.include_router(categories.router, prefix="/categories", tags=["分类"])
 api_router.include_router(admin.router, prefix="/admin", tags=["管理"])
 api_router.include_router(chat.router, prefix="/chat", tags=["对话"])
+api_router.include_router(free_mode.router, prefix="/free", tags=["自由模式"])
 
 __all__ = ["api_router"]

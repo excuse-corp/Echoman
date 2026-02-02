@@ -11,6 +11,7 @@
 
 - Base URL：`/api/v1`
 - Auth：`Authorization: Bearer <token>`（可替换为内网白名单/签名鉴权）
+- 自由模式：`/chat/ask` 的 `mode=global` 需要 `free_token`（由邀请码校验接口发放）
 - Content-Type：`application/json; charset=utf-8`
 - 幂等：对写操作支持 `Idempotency-Key` 头；返回 `X-Request-ID` 便于追踪。
 - 实现说明：对话与判定/摘要/分类的 AI 编排建议采用 LangChain + LangGraph；SSE 流式基于 LangChain astream 事件。
@@ -21,7 +22,8 @@
   - 注：原计划的 `tencent|xhs|douyin` 已因技术难度移除
 - `topic_status`: `active|ended`
 - `topic_category`: `entertainment|current_affairs|sports_esports`
-- `chat_mode`: `topic|global`
+- `chat_mode`: `topic|global`（兼容口径）
+- `mode`: `topic|global`（新口径）
 
 通用分页：
 - `?page=1&size=20`，响应含 `page, size, total`。
@@ -149,24 +151,28 @@
 
 
 
-## 对话（RAG）
+## 对话（RAG / 自由模式）
 
 - ✅ POST `/chat/ask`
   - 状态：**已实现** - 非流式版本
   - 入参：
 ```
 {
-  "chat_mode": "topic",       // topic|global
+  "mode": "topic",            // topic|global（新口径）
+  "chat_mode": "topic",       // 兼容字段（可不传）
   "topic_id": "t_123",        // topic 模式必填
   "query": "和去年的相比，有哪些改进？",
-  "top_k": 5,                  // global 模式可选
-  "stream": false              // 可选
+  "stream": false,             // 可选
+  "free_token": "free_xxx",    // 自由模式访问令牌（mode=global 时必填）
+  "history": [                 // 可选：对话历史（最多建议 8 条）
+    {"role":"user","content":"..."},
+    {"role":"assistant","content":"..."}
+  ]
 }
 ```
   - 出参（非流式）：
 ```
 {
-  "message_id":"m_456",
   "answer":"...（含明确引用的回答）...",
   "citations":[{
     "topic_id":"t_123",
@@ -215,6 +221,22 @@
   - 状态：**已实现** - 用于创建新会话
   - 入参：`{"mode":"global","topic_id":null}`
   - 出参：`{"id":1,"mode":"global","topic_id":null,"created_at":"..."}`
+
+## 自由模式
+
+- ✅ POST `/free/verify`
+  - 描述：邀请码校验并返回自由模式访问令牌
+  - 入参：
+  ```
+  {"code":"AB12CD34"}
+  ```
+  - 出参：
+  ```
+  {"valid": true, "token": "free_xxx", "expires_at": "2026-02-08T12:00:00+08:00"}
+  ```
+  - 说明：
+    - `token` 默认有效期 7 天
+    - `mode=global` 时必须携带 `free_token`
 
 ## 管理与统计（后台页面数据源）
 
