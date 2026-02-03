@@ -155,38 +155,15 @@ def init_database(backend_dir):
     print("\n🗄️  初始化数据库...")
     
     os.chdir(backend_dir)
-    
-    # 创建数据库初始化脚本
-    init_script = """
-import asyncio
-from app.core.database import engine
-from app.models import Base
 
-async def create_tables():
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-    print("✅ 数据库表创建完成")
-
-if __name__ == "__main__":
-    asyncio.run(create_tables())
-"""
-    
     try:
-        # 创建临时初始化脚本
-        script_path = backend_dir / "init_db_temp.py"
-        with open(script_path, 'w', encoding='utf-8') as f:
-            f.write(init_script)
-        
-        # 创建所有表
-        print("📝 创建数据库表...")
+        # 创建所有表 + 执行迁移脚本
+        print("📝 创建数据库表并执行迁移脚本...")
         result = activate_conda_and_run_command(
-            f"python {script_path}",
+            f"python {backend_dir / 'scripts' / 'init_tables.py'} create",
             check=False
         )
-        
-        # 删除临时脚本
-        script_path.unlink(missing_ok=True)
-        
+
         print("✅ 数据库初始化完成")
         return True
     except Exception as e:

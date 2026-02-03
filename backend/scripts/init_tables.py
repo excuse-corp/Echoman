@@ -27,6 +27,52 @@ async def create_tables():
         
         # 创建所有表
         await conn.run_sync(Base.metadata.create_all)
+
+        # 初始化物化视图（topic_item_mv）
+        await conn.execute(text("""
+            CREATE MATERIALIZED VIEW IF NOT EXISTS topic_item_mv AS
+            SELECT
+              t.id AS topic_id,
+              t.title_key AS title,
+              s.content AS summary,
+              t.first_seen,
+              t.last_active,
+              t.status,
+              t.category,
+              t.intensity_total,
+              t.current_heat_normalized AS heat_normalized,
+              EXTRACT(EPOCH FROM (t.last_active - t.first_seen)) / 3600.0 AS echo_length_hours,
+              si.id AS item_id,
+              si.title AS item_title,
+              si.summary AS item_summary,
+              si.url AS item_url,
+              si.platform AS item_platform,
+              si.published_at AS item_published_at,
+              si.fetched_at AS item_fetched_at
+            FROM topics t
+            LEFT JOIN summaries s ON s.id = t.summary_id
+            LEFT JOIN topic_nodes tn ON tn.topic_id = t.id
+            LEFT JOIN source_items si ON si.id = tn.source_item_id;
+        """))
+
+        await conn.execute(text("""
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_topic_item_mv_unique
+              ON topic_item_mv (topic_id, item_id);
+        """))
+        await conn.execute(text("""
+            CREATE INDEX IF NOT EXISTS idx_topic_item_mv_last_active
+              ON topic_item_mv (last_active);
+        """))
+        await conn.execute(text("""
+            CREATE INDEX IF NOT EXISTS idx_topic_item_mv_category
+              ON topic_item_mv (category);
+        """))
+        await conn.execute(text("""
+            CREATE INDEX IF NOT EXISTS idx_topic_item_mv_platform
+              ON topic_item_mv (item_platform);
+        """))
+
+        await conn.execute(text("REFRESH MATERIALIZED VIEW topic_item_mv"))
     
     print("✅ 数据库表创建完成")
     
@@ -91,4 +137,3 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
-

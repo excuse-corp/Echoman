@@ -68,6 +68,8 @@ cp env.template .env
 python backend.py --all --db --restart-celery
 ```
 
+> 说明：数据库初始化会自动创建自由模式相关表与 `topic_item_mv` 物化视图，无需额外迁移脚本。
+
 后端默认端口：`8778`
 
 ### 3) 启动前端

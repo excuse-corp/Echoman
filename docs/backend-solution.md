@@ -504,6 +504,7 @@
 
 - 依赖库与版本见根目录 `requirements.txt`。
 - 环境变量示例见 `.env.example`。
+- 数据库初始化：`init_tables.py create` 会同时创建表与 `topic_item_mv` 物化视图（无需额外迁移脚本）。
 - 关键变量：
   - `DB_URL`、`REDIS_URL`、`LLM_PROVIDER`、`OPENAI_API_KEY`/`AZURE_*`/`DASHSCOPE_API_KEY`
   - **`CRON_INGEST_SCHEDULE`**（默认 `0 8,10,12,14,16,18,20,22 * * *`，每 2 小时采集一次）

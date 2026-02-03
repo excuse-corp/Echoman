@@ -91,6 +91,7 @@ python frontend.py
 4. **初始化数据库**
    - 创建 pgvector 扩展
    - 创建所有数据库表
+   - 自动创建自由模式表与 `topic_item_mv` 物化视图（无需额外迁移脚本）
    - 显示已创建的表列表
 
 5. **启动选定的服务**
@@ -195,4 +196,3 @@ docker-compose up -d postgres redis
 | 22:20 | EVE 整体归并 | 与历史话题比对 |
 
 **每次采集各平台热榜前 30 条数据**
-
