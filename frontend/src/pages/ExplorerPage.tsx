@@ -207,7 +207,7 @@ export function ExplorerPage() {
       </div>
       <header className="explorer-header">
         <div className="brand">
-          <span className="brand-mark">E</span>
+          <img className="brand-mark" src="/echoman-logo.png" alt="Echoman logo" />
           <div>
             <h1>Echoman</h1>
             <p className="tagline">每个回声会持续多久</p>

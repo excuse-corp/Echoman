@@ -113,4 +113,4 @@ python backend/scripts/cleanup_noise_items.py --apply
 
 ## 📄 许可证
 
-本项目采用 [Apache-2.0](LICENSE) 许可证。
+本项目采用 [MIT](LICENSE) 许可证。
