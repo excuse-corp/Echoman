@@ -11,37 +11,17 @@ pgvector==0.3.3
 redis==5.0.8
 celery==5.4.0
 tenacity==9.0.0
-orjson==3.10.7
-python-dotenv==1.0.1
-prometheus-client==0.21.0
-sse-starlette==2.2.1
+pytz==2024.1
 chromadb==0.5.5
 
 # Crawl & parsing
 beautifulsoup4==4.12.3
 lxml==5.3.0
-selectolax==0.3.21
-trafilatura==1.12.2
-tldextract==5.1.2
 
 # Dedup & clustering
-rapidfuzz==3.10.0
-jieba==0.42.1
-simhash==2.1.2
 numpy==2.1.1
 scikit-learn==1.5.2
 
 # Embedding & LLM
-sentence-transformers==3.1.1
 openai==1.52.2
-dashscope==1.20.14
-langchain==0.3.2
-langchain-core==0.3.8
-langchain-community==0.3.1
-langchain-openai==0.2.2
-langgraph==0.2.22
 tiktoken==0.7.0
-
-# Observability (optional)
-opentelemetry-sdk==1.27.0
-langsmith==0.1.114

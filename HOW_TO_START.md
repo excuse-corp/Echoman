@@ -85,8 +85,7 @@ python frontend.py
    - 如果未运行，提示使用 Docker 启动
 
 3. **安装依赖**
-   - 检查是否已安装 FastAPI、SQLAlchemy、Celery 等核心依赖
-   - 推荐直接安装根目录 `requirements.txt`
+   - 以根目录 `requirements.txt` 为准
 
 4. **初始化数据库**
    - 创建 pgvector 扩展
